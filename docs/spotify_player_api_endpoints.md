@@ -268,26 +268,127 @@ GET https://api.spotify.com/v1/me/player
 Authorization: Bearer <ACCESS_TOKEN>
 ```
 
-**Example Response (simplified)**
+**Example Response**
 ```json
 {
   "device": {
-    "id": "<DEVICE_ID>",
-    "name": "Web Player",
-    "is_active": true,
-    "volume_percent": 50
+    "id": "string",
+    "is_active": false,
+    "is_private_session": false,
+    "is_restricted": false,
+    "name": "Kitchen speaker",
+    "type": "computer",
+    "volume_percent": 59,
+    "supports_volume": false
   },
+  "repeat_state": "string",
   "shuffle_state": false,
-  "repeat_state": "off",
-  "timestamp": 1700000000000,
-  "progress_ms": 45000,
-  "is_playing": true,
+  "context": {
+    "type": "string",
+    "href": "string",
+    "external_urls": {
+      "spotify": "string"
+    },
+    "uri": "string"
+  },
+  "timestamp": 0,
+  "progress_ms": 0,
+  "is_playing": false,
   "item": {
-    "id": "4iV5W9uYEdYUVa79Axb7Rh",
-    "name": "Track Name",
+    "album": {
+      "album_type": "compilation",
+      "total_tracks": 9,
+      "available_markets": [
+        "CA",
+        "BR",
+        "IT"
+      ],
+      "external_urls": {
+        "spotify": "string"
+      },
+      "href": "string",
+      "id": "2up3OPMp9Tb4dAKM2erWXQ",
+      "images": [
+        {
+          "url": "https://i.scdn.co/image/ab67616d00001e02ff9ca10b55ce82ae553c8228",
+          "height": 300,
+          "width": 300
+        }
+      ],
+      "name": "string",
+      "release_date": "1981-12",
+      "release_date_precision": "year",
+      "restrictions": {
+        "reason": "market"
+      },
+      "type": "album",
+      "uri": "spotify:album:2up3OPMp9Tb4dAKM2erWXQ",
+      "artists": [
+        {
+          "external_urls": {
+            "spotify": "string"
+          },
+          "href": "string",
+          "id": "string",
+          "name": "string",
+          "type": "artist",
+          "uri": "string"
+        }
+      ]
+    },
     "artists": [
-      { "name": "Artist" }
-    ]
+      {
+        "external_urls": {
+          "spotify": "string"
+        },
+        "href": "string",
+        "id": "string",
+        "name": "string",
+        "type": "artist",
+        "uri": "string"
+      }
+    ],
+    "available_markets": [
+      "string"
+    ],
+    "disc_number": 0,
+    "duration_ms": 0,
+    "explicit": false,
+    "external_ids": {
+      "isrc": "string",
+      "ean": "string",
+      "upc": "string"
+    },
+    "external_urls": {
+      "spotify": "string"
+    },
+    "href": "string",
+    "id": "string",
+    "is_playable": false,
+    "linked_from": {},
+    "restrictions": {
+      "reason": "string"
+    },
+    "name": "string",
+    "popularity": 0,
+    "preview_url": "string",
+    "track_number": 0,
+    "type": "track",
+    "uri": "string",
+    "is_local": false
+  },
+  "currently_playing_type": "string",
+  "actions": {
+    "interrupting_playback": false,
+    "pausing": false,
+    "resuming": false,
+    "seeking": false,
+    "skipping_next": false,
+    "skipping_prev": false,
+    "toggling_repeat_context": false,
+    "toggling_shuffle": false,
+    "toggling_repeat_track": false,
+    "transferring_playback": false
   }
 }
 ```
