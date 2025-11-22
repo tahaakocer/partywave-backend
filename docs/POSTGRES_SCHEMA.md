@@ -178,6 +178,40 @@ Stores Spotify OAuth access and refresh tokens for each user. Tokens are used to
 * When access token expires, use `refresh_token` to obtain a new access token via Spotify Token API.
 * Tokens are updated during OAuth callback and token refresh operations.
 
+### 2.6 `refresh_tokens` (Optional)
+
+**Note**: This table is **optional** and only needed if you want to implement refresh token storage and blacklisting for PartyWave JWT tokens. See `AUTHENTICATION.md` section 2.3 for details.
+
+Stores PartyWave JWT refresh tokens for token revocation and blacklisting support.
+
+**Columns**
+
+* `id: UUID` – Primary key.
+* `app_user_id: UUID` – FK → `app_user.id`.
+* `token_hash: String` – Hashed refresh token (unique, for lookup).
+* `expires_at: Instant` – When the refresh token expires.
+* `created_at: Instant` – When the token was created.
+* `revoked_at: Instant` – When the token was revoked (NULL if active).
+* `device_info: String` – Optional: Device/browser information for security audit.
+* `ip_address: String` – Optional: IP address for audit trail.
+
+**Relationships**
+
+* Many `refresh_tokens` rows per `app_user` (one-to-many, allows multiple active refresh tokens per user for different devices).
+
+**Business rules**
+
+* `token_hash` should be unique.
+* Only non-revoked tokens (`revoked_at IS NULL`) and non-expired tokens (`expires_at > NOW()`) are valid.
+* When a refresh token is used, optionally revoke the old token and create a new one (token rotation).
+* Tokens can be revoked on logout or security incidents by setting `revoked_at`.
+
+**AI Agent Notes**:
+- This table is optional. JWT tokens can be stateless without database storage.
+- If implemented, use it for token blacklisting and revocation support.
+- Hash refresh tokens before storing (use SHA-256 or bcrypt).
+- Consider cleanup job to remove expired tokens periodically.
+
 ---
 
 ## 3. Room & Membership Domain
@@ -380,5 +414,7 @@ While this document is PostgreSQL‑centric, agents should be aware of how it in
 * **Votes**: PostgreSQL stores vote records (`vote` table). Note: `vote.playlist_item_id` is a string UUID referencing a Redis-stored playlist item, not a PostgreSQL foreign key.
 * **User statistics**: PostgreSQL `app_user_stats` stores aggregated like/dislike totals. **Important**: When a playlist item in Redis receives a like/dislike, `app_user_stats` must be updated for the track adder (see `REDIS_ARCHITECTURE.md` section 2.2 for race condition handling).
 * **User tokens**: PostgreSQL `user_tokens` stores Spotify OAuth tokens for API authentication.
+* **Refresh tokens** (optional): PostgreSQL `refresh_tokens` can store PartyWave JWT refresh tokens for revocation support (see `AUTHENTICATION.md`).
 
 For detailed Redis architecture, see `REDIS_ARCHITECTURE.md`.
+For authentication and security specifications, see `AUTHENTICATION.md`.

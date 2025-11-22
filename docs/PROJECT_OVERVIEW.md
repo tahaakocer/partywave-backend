@@ -23,6 +23,7 @@ For detailed technical specifications, refer to:
 - `POSTGRES_SCHEMA.md` – Database schema and relationships
 - `REDIS_ARCHITECTURE.md` – Redis data structures and patterns
 - `SPOTIFY_*.md` – Spotify API integration endpoints
+- `AUTHENTICATION.md` – JWT-based authentication and WebSocket security
 
 ---
 
@@ -59,7 +60,11 @@ For detailed technical specifications, refer to:
      - `token_type` = `Bearer`
      - `expires_at` = token expiration time (from Spotify response)
      - `scope` = granted OAuth scopes
-10. Backend returns user data and JWT token (or session) to frontend (via redirect to frontend with token, or API response).
+10. Backend generates PartyWave JWT tokens:
+    - Generate JWT access token (15 min expiration) with user claims (see `AUTHENTICATION.md` section 2.1)
+    - Generate JWT refresh token (7 days expiration)
+    - Store refresh token hash in database (if refresh token storage implemented)
+11. Backend returns user data and JWT tokens to frontend (via redirect to frontend with token, or API response, or httpOnly cookies).
 
 **Database Impact**:
 - `app_user` table: INSERT (new users) or UPDATE (existing users)
@@ -73,6 +78,7 @@ For detailed technical specifications, refer to:
 - Use Spotify User API endpoints (see `SPOTIFY_AUTH_ENDPOINTS.md`).
 - Store Spotify access/refresh tokens securely in `user_tokens` table (see `POSTGRES_SCHEMA.md`). Tokens should be encrypted at rest.
 - Handle token refresh automatically before API calls: Check `user_tokens.expires_at` before making Spotify API requests. If expired, use `refresh_token` to obtain a new access token via Spotify Token API, then update `user_tokens` record.
+- **JWT Authentication**: After Spotify OAuth, backend must generate PartyWave JWT tokens for application-level authentication. All API requests and WebSocket connections require JWT authentication. See `AUTHENTICATION.md` for detailed JWT and WebSocket authentication specifications.
 
 ---
 
@@ -82,7 +88,7 @@ For detailed technical specifications, refer to:
 
 **Workflow**:
 
-1. Authenticated user requests to create a room with:
+1. **Authenticated user** (JWT token required) requests to create a room with:
    - `name: String` (required)
    - `description: String` (optional)
    - `tags: List<String>` (optional, e.g., `["lofi", "90s", "turkish-rap"]`)
@@ -131,7 +137,7 @@ For detailed technical specifications, refer to:
 
 **Workflow**:
 
-1. User requests list of public rooms (with optional filters):
+1. **Authenticated user** (JWT token required) requests list of public rooms (with optional filters):
    - Filter by tags (e.g., `?tags=lofi,90s`)
    - Search by name/description (e.g., `?search=chill`)
    - Pagination (e.g., `?page=1&size=20`)
@@ -321,7 +327,7 @@ The PartyWave playlist system uses a single unified list that contains **all tra
 
 **Workflow**:
 
-1. User searches for tracks using Spotify Search API (see `SPOTIFY_SEARCH_ENDPOINTS.md`):
+1. **Authenticated user** (JWT token required) searches for tracks using Spotify Search API (see `SPOTIFY_SEARCH_ENDPOINTS.md`):
    - Query: `?q=artist:name+track:title&type=track`
    - Backend proxies request to Spotify API with user's access token.
    - Spotify returns track results.
@@ -442,7 +448,7 @@ The PartyWave playlist system uses a single unified list that contains **all tra
 
 **Workflow**:
 
-1. User requests to vote for skipping current track:
+1. **Authenticated user** (JWT token required) requests to vote for skipping current track:
    - User must be a member of the room.
    - There must be a track currently playing (check Redis playback hash: `HGET partywave:room:{roomId}:playback current_playlist_item_id`).
 2. Backend checks if user already voted:
@@ -496,7 +502,7 @@ The PartyWave playlist system uses a single unified list that contains **all tra
 
 **Workflow**:
 
-1. User requests to vote for kicking another user:
+1. **Authenticated user** (JWT token required) requests to vote for kicking another user:
    - User must be a member of the room.
    - Target user must be a member of the room.
    - User cannot vote to kick themselves.
@@ -542,7 +548,7 @@ The PartyWave playlist system uses a single unified list that contains **all tra
 
 **Workflow**:
 
-1. User requests to like or dislike a playlist item:
+1. **Authenticated user** (JWT token required) requests to like or dislike a playlist item:
    - User must be a member of the room.
    - Playlist item must exist in Redis (check: `EXISTS partywave:room:{roomId}:playlist:item:{playlistItemId}`).
 2. Backend checks if user already rated this item in Redis:
@@ -596,7 +602,7 @@ The PartyWave playlist system uses a single unified list that contains **all tra
 
 **Workflow**:
 
-1. User requests to save current track to Spotify:
+1. **Authenticated user** (JWT token required) requests to save current track to Spotify:
    - User must be authenticated (have valid Spotify access token).
    - There must be a track currently playing.
 2. Backend fetches track metadata from Redis:
@@ -624,7 +630,7 @@ The PartyWave playlist system uses a single unified list that contains **all tra
 
 **Workflow**:
 
-1. User sends chat message:
+1. **Authenticated user** (JWT token required) sends chat message:
    - User must be a member of the room.
    - Message content must not be empty (and may have length limits).
 2. Backend validates message (optional: profanity filter, rate limiting).
@@ -653,7 +659,7 @@ The PartyWave playlist system uses a single unified list that contains **all tra
 
 **Workflow**:
 
-1. User requests profile data for a user ID (self or other).
+1. **Authenticated user** (JWT token required) requests profile data for a user ID (self or other).
 2. Backend queries `app_user` table with user ID.
 3. Backend fetches related data:
    - `app_user_images` (profile images)
@@ -674,7 +680,16 @@ The PartyWave playlist system uses a single unified list that contains **all tra
 
 ## 3. Real-Time Communication (WebSocket Events)
 
-PartyWave uses WebSocket for real-time updates. Common event types:
+PartyWave uses WebSocket for real-time updates. **All WebSocket connections must be authenticated using JWT tokens** (see `AUTHENTICATION.md` section 3).
+
+**WebSocket Connection Flow**:
+1. Client connects to WebSocket endpoint with JWT token (in URL query parameter or initial message).
+2. Backend validates JWT token (same validation as API requests).
+3. If authentication fails, connection is closed with code `1008` (Policy Violation).
+4. If authentication succeeds, client must subscribe to rooms to receive events.
+5. Room subscription requires membership verification (see `AUTHENTICATION.md` section 3.2).
+
+Common event types:
 
 ### 3.1 Playback Events
 
@@ -701,9 +716,13 @@ PartyWave uses WebSocket for real-time updates. Common event types:
 - `VOTE_THRESHOLD_REACHED`: Vote threshold reached, action executed
 
 **AI Agent Notes**:
+- **WebSocket Authentication**: All WebSocket connections must be authenticated using JWT tokens before allowing any operations. See `AUTHENTICATION.md` section 3 for detailed specifications.
+- **Room Subscription**: Users must subscribe to rooms after authentication. Subscription requires room membership verification (PostgreSQL `room_member` table).
+- **Message Authorization**: All room-related messages require room subscription and membership verification.
 - WebSocket connections should be room-scoped (user subscribes to room events when joining).
-- Handle reconnection gracefully (send current state on reconnect).
+- Handle reconnection gracefully (send current state on reconnect, re-authenticate with refreshed token if needed).
 - Consider using a message broker (e.g., Redis Pub/Sub) for multi-server deployments.
+- **Rate Limiting**: Implement rate limiting on WebSocket messages to prevent spam and abuse.
 
 ---
 
@@ -739,13 +758,15 @@ PartyWave uses WebSocket for real-time updates. Common event types:
 ### 5.1 Spotify API
 
 PartyWave integrates with Spotify for:
-- **Authentication**: OAuth 2.0 flow
+- **Authentication**: OAuth 2.0 flow (external authentication provider)
 - **User Profile**: Fetch user data and images
 - **Search**: Search for tracks to add to playlists
 - **Playback**: Spotify Web SDK for synchronized playback
 - **Library Management**: Save tracks to user's library or playlists
 
 See `SPOTIFY_*.md` documents for endpoint specifications.
+
+**Important**: Spotify OAuth2 authenticates users with Spotify, but **all PartyWave API requests and WebSocket connections require JWT-based application authentication**. See `AUTHENTICATION.md` for details.
 
 ### 5.2 Database Schema
 
@@ -786,16 +807,20 @@ See `REDIS_ARCHITECTURE.md` for:
 
 When implementing PartyWave features:
 
-1. **Always validate user membership** before allowing room actions.
-2. **Use transactions** for multi-step operations (e.g., add track = create Redis hash + update Redis list).
-3. **Emit WebSocket events** after state changes to keep clients synchronized.
-4. **Handle Redis failures gracefully** (Redis is critical for playlist operations; implement proper error handling).
-5. **Respect Spotify API rate limits** (implement throttling/queuing if needed).
-6. **Use UTC timestamps** for all time-based operations to avoid timezone issues.
-7. **Implement proper error responses** with clear messages for frontend handling.
-8. **Handle race conditions** when updating like/dislike statistics: Redis and PostgreSQL updates are not atomic. Use compensation pattern, outbox pattern, or saga pattern to ensure data consistency. See section 2.9.1 for detailed solution approaches.
-9. **Clean up Redis keys** when rooms close or are deleted (playlist items, like/dislike sets, playback state).
-10. **No PostgreSQL operations for playlist items** - all playlist data is stored in Redis only.
+1. **Always authenticate requests**: All API endpoints (except public OAuth endpoints) require JWT authentication. Extract `app_user_id` from JWT `sub` claim. See `AUTHENTICATION.md` section 2.4.
+2. **Always validate user membership** before allowing room actions.
+3. **WebSocket authentication**: All WebSocket connections must be authenticated with JWT before allowing room subscriptions. See `AUTHENTICATION.md` section 3.
+4. **Use transactions** for multi-step operations (e.g., add track = create Redis hash + update Redis list).
+5. **Emit WebSocket events** after state changes to keep clients synchronized.
+6. **Handle Redis failures gracefully** (Redis is critical for playlist operations; implement proper error handling).
+7. **Respect Spotify API rate limits** (implement throttling/queuing if needed).
+8. **Use UTC timestamps** for all time-based operations to avoid timezone issues.
+9. **Implement proper error responses** with clear messages for frontend handling.
+10. **Handle race conditions** when updating like/dislike statistics: Redis and PostgreSQL updates are not atomic. Use compensation pattern, outbox pattern, or saga pattern to ensure data consistency. See section 2.9.1 for detailed solution approaches.
+11. **Clean up Redis keys** when rooms close or are deleted (playlist items, like/dislike sets, playback state).
+12. **No PostgreSQL operations for playlist items** - all playlist data is stored in Redis only.
+13. **Token validation**: Always validate JWT token signature, expiration, and user status before processing requests.
+14. **Rate limiting**: Implement rate limiting on authentication endpoints and WebSocket messages to prevent abuse.
 
 ---
 
