@@ -15,7 +15,9 @@ PartyWave uses a **dual-storage architecture**:
 - **Spotify Web SDK**: Client-side music playback synchronization
 - **WebSocket**: Real-time communication for chat, playback events, and room state updates
 
-**Important**: Playlist items, track metadata, and like/dislike statistics are stored **only in Redis** and are cleaned up when rooms close.
+**Important**: 
+- Playlist items, track metadata, and like/dislike statistics are stored **only in Redis** and are cleaned up when rooms close.
+- **Tracks are never removed from the playlist list**: When a track finishes (`PLAYED`) or is skipped (`SKIPPED`), only its `status` field is updated. The track remains in the playlist list for history. Filter by `status` to get active tracks (`QUEUED`/`PLAYING`) or history (`PLAYED`/`SKIPPED`).
 
 For detailed technical specifications, refer to:
 - `POSTGRES_SCHEMA.md` – Database schema and relationships
@@ -469,9 +471,8 @@ The PartyWave playlist system uses a single unified list that contains **all tra
        - **Important**: The track remains in the playlist list with updated status. The playlist item hash is **NOT deleted** - it remains in Redis for history with its like/dislike statistics.
    - Backend selects next track from playlist (if exists):
      - Iterate through playlist list, find first item with `status = QUEUED`.
-     - Start next track (repeat section 2.6, step 1).
-     - If playlist is empty, stop playback and clear Redis playback hash.
      - If next track exists, start it (see section 2.6, step 1).
+     - If playlist is empty, stop playback and clear Redis playback hash.
    - Backend emits WebSocket event `TRACK_SKIPPED` to all room members.
 8. Backend returns vote status to requester.
 
@@ -585,64 +586,7 @@ The PartyWave playlist system uses a single unified list that contains **all tra
 - Statistics are aggregated per user who **added** the track, not per track.
 - **Critical**: When updating like/dislike in Redis, always update `app_user_stats` in PostgreSQL for the track adder. This ensures user statistics persist even after rooms close.
 - Like/dislike counts are stored in Redis sets and can be queried in real-time.
-- **Distributed Transaction Challenge**: Redis and PostgreSQL updates are not atomic. If Redis succeeds but PostgreSQL fails, data inconsistency occurs. See section 2.9.1 for solution approach.
-
-#### 2.9.1 Race Condition & Atomicity Problem
-
-**Problem**: The like/dislike update workflow involves two separate systems:
-- **Redis**: Updates like/dislike sets (runtime state)
-- **PostgreSQL**: Updates `app_user_stats` (persistent statistics)
-
-These updates are **not atomic** because:
-1. Redis and PostgreSQL do not share a distributed transaction coordinator.
-2. If Redis update succeeds but PostgreSQL update fails, **data inconsistency occurs**:
-   - Redis shows the like/dislike (visible to users)
-   - PostgreSQL `app_user_stats` is not updated (statistics are incorrect)
-3. Conversely, if PostgreSQL succeeds but Redis fails:
-   - Statistics are updated correctly
-   - But Redis state is inconsistent (users see incorrect counts)
-
-**Impact**:
-- User statistics (`app_user_stats.total_like`, `app_user_stats.total_dislike`) may become inaccurate.
-- This inconsistency persists even after rooms close (since `app_user_stats` is in PostgreSQL).
-
-**Solution Approaches**:
-
-**1. Compensation Pattern (Recommended)**:
-   - **Order**: Update PostgreSQL first, then Redis.
-   - **On PostgreSQL Success**: Update Redis.
-   - **On Redis Failure**: Compensate by reverting PostgreSQL update (rollback).
-   - **On PostgreSQL Failure**: Return error to user, no Redis update.
-   - **Pros**: Simpler, no additional infrastructure.
-   - **Cons**: Requires compensation logic, partial failures still possible
-
-**Recommended Implementation**:
-
-Use **Compensation Pattern** with proper error handling:
-
-1. **Start Transaction**:
-   - Begin PostgreSQL transaction (if supported by ORM/framework).
-
-2. **Update PostgreSQL `app_user_stats`**:
-   - Get `added_by_id` from Redis (read-only, safe).
-   - Update `app_user_stats` in PostgreSQL within transaction.
-   - If fails → Rollback transaction, return error to user.
-
-3. **Update Redis**:
-   - If PostgreSQL succeeds, update Redis like/dislike sets.
-   - If Redis fails → **Compensate**: Revert PostgreSQL update (decrement/increment counters back).
-   - Log the failure for monitoring.
-
-4. **Commit Transaction** (if using transaction):
-   - If both succeed, commit PostgreSQL transaction.
-   - If Redis fails, rollback PostgreSQL transaction.
-
-
-**AI Agent Notes**:
-- **Always implement retry logic** for PostgreSQL updates that fail due to transient errors (network, deadlocks).
-- **Log all compensation actions** for audit and debugging.
-- **Monitor for inconsistencies** between Redis and PostgreSQL (can create a reconciliation job).
-- **Consider idempotency**: Like/dislike operations should be idempotent (multiple identical requests have same effect as one).
+- **Distributed Transaction Challenge**: Redis and PostgreSQL updates are not atomic. If Redis succeeds but PostgreSQL fails, data inconsistency occurs. See `REDIS_ARCHITECTURE.md` section 2.2 for detailed solution approaches.
 
 ---
 
@@ -703,13 +647,13 @@ Use **Compensation Pattern** with proper error handling:
 
 ---
 
-### 2.12 User Profile Viewing
+### 2.12 User Profile Viewing & Statistics
 
-**Feature**: Users can view other users' profiles, including statistics and added tracks.
+**Feature**: Users can view other users' profiles, including statistics (like/dislike totals) and basic profile information.
 
 **Workflow**:
 
-1. User requests profile data for a user ID.
+1. User requests profile data for a user ID (self or other).
 2. Backend queries `app_user` table with user ID.
 3. Backend fetches related data:
    - `app_user_images` (profile images)
@@ -722,27 +666,8 @@ Use **Compensation Pattern** with proper error handling:
 
 **AI Agent Notes**:
 - Profile data is public (or restricted based on privacy settings, if implemented).
-- Statistics (`app_user_stats`) are updated in real-time when playlist items receive likes/dislikes in Redis (see section 2.9).
+- Statistics (`app_user_stats`) are updated in real-time when playlist items receive likes/dislikes in Redis (see section 2.9). The `app_user_stats` table is updated in PostgreSQL immediately when a like/dislike is added/updated in Redis.
 - Historical track lists are not available since playlist items are cleaned up when rooms close.
-
----
-
-### 2.13 User Statistics (Like/Dislike Totals)
-
-**Feature**: Users can view their own or others' statistics showing total likes/dislikes received for tracks they added.
-
-**Workflow**:
-
-1. User requests statistics for a user ID (self or other).
-2. Backend queries `app_user_stats` table:
-   - `SELECT total_like, total_dislike FROM app_user_stats WHERE id = (SELECT app_user_stats FROM app_user WHERE id = X)`
-3. Backend returns statistics to frontend.
-
-**Database Impact**:
-- Read-only queries
-
-**AI Agent Notes**:
-- Statistics are maintained by application logic when playlist items receive likes/dislikes in Redis (see section 2.9). The `app_user_stats` table is updated in PostgreSQL immediately when a like/dislike is added/updated in Redis.
 - Consider adding more statistics (e.g., tracks added, rooms created, etc.) if needed.
 
 ---

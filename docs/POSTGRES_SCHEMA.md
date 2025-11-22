@@ -12,7 +12,9 @@ PartyWave uses PostgreSQL as the **system of record** for all persistent entitie
 * Chat messages
 * Votes (skip / kick)
 
-**Note**: Tracks, playlist items, and likes/dislikes are stored **only in Redis** as runtime state and are cleaned up when rooms close. See `REDIS_ARCHITECTURE.md` for details.
+**Note**: 
+- Tracks, playlist items, and likes/dislikes are stored **only in Redis** as runtime state and are cleaned up when rooms close. See `REDIS_ARCHITECTURE.md` for details.
+- **Tracks are never removed from the playlist list**: When a track finishes (`PLAYED`) or is skipped (`SKIPPED`), only its `status` field is updated in Redis. The track remains in the playlist list for history. Filter by `status` to get active tracks or history.
 
 Runtime state (playlist ordering, playback state, online members, TTL cleanup) is handled in **Redis** and is documented separately in the `PartyWave – Redis Architecture` document.
 
@@ -122,7 +124,7 @@ These updates are **not atomic** because Redis and PostgreSQL do not share a dis
 
 **Solution Approaches**:
 
-See `PROJECT_OVERVIEW.md` section 2.9.1 and `REDIS_ARCHITECTURE.md` section 2.2 for detailed solution approaches:
+See `REDIS_ARCHITECTURE.md` section 2.2 for detailed solution approaches:
 
 1. **Compensation Pattern** (Recommended): Update PostgreSQL first, then Redis. If Redis fails, compensate by reverting PostgreSQL update.
 
@@ -372,33 +374,11 @@ Used by `vote.vote_type`.
 
 While this document is PostgreSQL‑centric, agents should be aware of how it interacts with the Redis layer:
 
-* **Playlist items and tracks**
+* **Playlist items and tracks**: All playlist items, track metadata, and like/dislike statistics are stored in Redis only (see `REDIS_ARCHITECTURE.md`).
+* **Playback state**: Redis stores the active playback hash per room.
+* **Online members**: Redis tracks currently online members (`partywave:room:{roomId}:members:online`), while PostgreSQL `room_member` stores long‑term membership records.
+* **Votes**: PostgreSQL stores vote records (`vote` table). Note: `vote.playlist_item_id` is a string UUID referencing a Redis-stored playlist item, not a PostgreSQL foreign key.
+* **User statistics**: PostgreSQL `app_user_stats` stores aggregated like/dislike totals. **Important**: When a playlist item in Redis receives a like/dislike, `app_user_stats` must be updated for the track adder (see `REDIS_ARCHITECTURE.md` section 2.2 for race condition handling).
+* **User tokens**: PostgreSQL `user_tokens` stores Spotify OAuth tokens for API authentication.
 
-  * Redis: All playlist items, track metadata, and like/dislike statistics are stored in Redis only.
- 
-* **Playback state**
-
-  * Redis stores the active playback hash per room.
-
-* **Online members**
-
-  * Redis: `partywave:room:{roomId}:members:online` contains the set of online `app_user.id`s.
-  * PostgreSQL: `room_member` stores long‑term membership records.
-
-* **Votes**
-
-  * PostgreSQL stores vote records (`vote` table) for skip and kick actions.
-  * Note: `vote.playlist_item_id` is a string UUID referencing a Redis-stored playlist item, not a PostgreSQL foreign key.
-
-* **User statistics**
-
-  * PostgreSQL: `app_user_stats` stores aggregated like/dislike totals for users.
-  * **Important**: When a playlist item in Redis receives a like or dislike, the `app_user_stats` table must be updated for the user who added that track. This ensures statistics persist even after rooms close.
-
-* **User tokens**
-
-  * PostgreSQL: `user_tokens` stores Spotify OAuth access and refresh tokens for each user.
-  * Tokens are used to authenticate Spotify API requests (search, playback, user library operations).
-  * Access tokens expire and must be refreshed using the refresh token before making API calls.
-
-This division of responsibilities keeps PostgreSQL as the **authoritative persistent store** for users, rooms, votes, and user tokens, while Redis provides a **fast runtime state layer** for playlist items, tracks, and their statistics.
+For detailed Redis architecture, see `REDIS_ARCHITECTURE.md`.

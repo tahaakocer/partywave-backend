@@ -26,6 +26,10 @@ In examples below, `{roomId}`, `{playlistItemId}`, `{userId}` etc. are UUID stri
 
 PartyWave stores **all playlist items and track metadata in Redis only**. These are runtime-only data that are cleaned up when rooms close. Tracks are **always appended to the end of the playlist**.
 
+**Critical Business Rules**:
+- **Tracks are never removed from the playlist list**: When a track finishes (`PLAYED`) or is skipped (`SKIPPED`), only its `status` field is updated in the hash. The track ID remains in the playlist list for history. Filter by `status` to get active tracks (`QUEUED`/`PLAYING`) or history (`PLAYED`/`SKIPPED`).
+- **Playlist item hashes are not deleted** when tracks finish or are skipped - they remain in Redis until room cleanup to preserve history and like/dislike statistics.
+
 ### 1.1 Key: Playlist Item Hash
 
 ```text
@@ -74,11 +78,11 @@ duration_ms           = Long (track duration in milliseconds)
 
 2. **PLAYING → PLAYED**:
    - When a track finishes naturally (reaches end of duration).
-   - Track is removed from playlist after this transition.
+   - Only the `status` field is updated to `PLAYED`. The track remains in the playlist list.
 
 3. **PLAYING → SKIPPED**:
    - When a track is skipped before completion (via vote threshold or manual action).
-   - Track is removed from playlist after this transition.
+   - Only the `status` field is updated to `SKIPPED`. The track remains in the playlist list.
 
 4. **Final States**:
    - `PLAYED`: **Final state** - A track with status `PLAYED` **cannot** transition back to `PLAYING`.
@@ -86,9 +90,9 @@ duration_ms           = Long (track duration in milliseconds)
 
 **Important Business Rules:**
 
-- **A `PLAYED` track cannot become `PLAYING` again**: Once a playlist item reaches `PLAYED` status, it is removed from the playlist and cannot be replayed as the same item. The same Spotify track can be added again later, but it will be a **new playlist item** with a new UUID and status `QUEUED`.
+- **A `PLAYED` track cannot become `PLAYING` again**: Once a playlist item reaches `PLAYED` status, it cannot be replayed as the same item. The same Spotify track can be added again later, but it will be a **new playlist item** with a new UUID and status `QUEUED`.
 
-- **Playlist progression**: When a track is `PLAYED` or `SKIPPED`, it is removed from the playlist, and the next `QUEUED` track becomes `PLAYING`.
+- **Playlist progression**: When a track is `PLAYED` or `SKIPPED`, only its `status` field is updated. The track remains in the playlist list, and the next `QUEUED` track becomes `PLAYING`.
 
 - **Re-adding tracks**: The same Spotify track (same `source_id` or `source_uri`) can be added to the playlist multiple times. Each addition creates a **new playlist item** with:
   - New UUID
@@ -120,7 +124,7 @@ QUEUED → PLAYING → PLAYED (final)
 - **Prevent invalid transitions**: Reject attempts to play tracks with status `PLAYED` or `SKIPPED`.
 - **New playlist item for re-added tracks**: When the same Spotify track is added again, create a new playlist item with new UUID and status `QUEUED`.
 
-### 1.1 Key: Room Playlist
+### 1.3 Key: Room Playlist
 
 ```text
 partywave:room:{roomId}:playlist   (LIST)
@@ -584,10 +588,10 @@ Suggested cleanup logic (`RoomCleanupService`):
    - The likes set: `DEL partywave:room:{roomId}:playlist:item:{playlistItemId}:likes`
    - The dislikes set: `DEL partywave:room:{roomId}:playlist:item:{playlistItemId}:dislikes`
 
-4. Delete the sequence counter (if used):
+3. Delete the sequence counter (if used):
    - `DEL partywave:room:{roomId}:playlist:sequence_counter`
 
-3. Delete the main room keys:
+4. Delete the main room keys:
    ```bash
    DEL partywave:room:{roomId}:playlist
    DEL partywave:room:{roomId}:playback
