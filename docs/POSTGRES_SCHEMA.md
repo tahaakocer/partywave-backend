@@ -7,11 +7,12 @@ It is written for AI agents and backend developers. The goal is to provide a cle
 PartyWave uses PostgreSQL as the **system of record** for all persistent entities:
 
 * Users & profiles
+* User tokens (Spotify OAuth)
 * Rooms & membership
-* Tracks & playlist items
-* Likes / dislikes for playlist items
 * Chat messages
 * Votes (skip / kick)
+
+**Note**: Tracks, playlist items, and likes/dislikes are stored **only in Redis** as runtime state and are cleaned up when rooms close. See `REDIS_ARCHITECTURE.md` for details.
 
 Runtime state (playlist ordering, playback state, online members, TTL cleanup) is handled in **Redis** and is documented separately in the `PartyWave – Redis Architecture` document.
 
@@ -47,8 +48,6 @@ For brevity, they are omitted on individual table listings below, but agents can
 The schema uses several enums, modelled as PostgreSQL enum types or constrained string fields:
 
 * `VOTE_TYPE`: `SKIPTRACK`, `KICKUSER`
-* `playlist_item_status`: `QUEUED`, `PLAYING`, `PLAYED`, `SKIPPED`
-* `playlist_item_stats_enum`: `LIKE`, `DISLIKE`
 * `room_member_role`: e.g. `OWNER`, `DJ`, `MODERATOR`, `PARTICIPANT` (name only is shown in the diagram)
 * `app_user_status`: `ONLINE`, `OFFLINE`, `BANNED`
 
@@ -82,8 +81,11 @@ Represents a PartyWave user linked to a Spotify account.
 
 * One `app_user` can have many `app_user_images`.
 * One `app_user` has one `app_user_stats` row.
+* One `app_user` has one `user_tokens` row (for Spotify OAuth tokens).
 * `room_member.app_user_id` references `app_user.id`.
-* `playlist_item.added_by_id`, `playlist_item_stats.user_id`, `vote.voter_id`, `vote.target_user_id`, `chat_message.sender_id` all reference `app_user.id`.
+* `vote.voter_id`, `vote.target_user_id`, `chat_message.sender_id` all reference `app_user.id`.
+
+**Note**: `playlist_item.added_by_id` and `playlist_item_stats.user_id` no longer exist in PostgreSQL; playlist items and their stats are stored in Redis only.
 
 ### 2.2 `app_user_status` (enum)
 
@@ -93,7 +95,7 @@ Represents a user’s state in the system:
 * `OFFLINE`
 * `BANNED`
 
-Used by `app_user.statusUserStatus`.
+Used by `app_user.status`.
 
 ### 2.3 `app_user_stats`
 
@@ -105,7 +107,34 @@ Aggregated statistics for a user.
 * `total_like: Integer` – Total number of likes received (e.g. for tracks the user added).
 * `total_dislike: Integer` – Total number of dislikes.
 
-Agents can update these counters when new like/dislike rows are written to `playlist_item_stats`.
+**Business Rules & Consistency**
+
+* Statistics are **updated in real-time** when playlist items (stored in Redis) receive likes/dislikes.
+* **Critical**: When a like/dislike is added/removed in Redis, the `app_user_stats` table must be updated **atomically** for the track adder (`added_by_id`).
+
+**Race Condition & Atomicity Problem**:
+
+When updating like/dislike statistics:
+1. **Redis** updates like/dislike sets (runtime state).
+2. **PostgreSQL** updates `app_user_stats` (persistent state).
+
+These updates are **not atomic** because Redis and PostgreSQL do not share a distributed transaction coordinator. If Redis succeeds but PostgreSQL fails (or vice versa), **data inconsistency occurs**.
+
+**Solution Approaches**:
+
+See `PROJECT_OVERVIEW.md` section 2.9.1 and `REDIS_ARCHITECTURE.md` section 2.2 for detailed solution approaches:
+
+1. **Compensation Pattern** (Recommended): Update PostgreSQL first, then Redis. If Redis fails, compensate by reverting PostgreSQL update.
+
+2. **Outbox Pattern**: Update PostgreSQL within transaction, write event to `outbox` table. Background job processes outbox events and updates Redis.
+
+3. **Saga Pattern**: Orchestrate both updates with compensation logic.
+
+**AI Agent Notes**:
+- **Always use transactions** when updating `app_user_stats` to ensure atomicity within PostgreSQL.
+- **Implement retry logic** for transient failures (network, deadlocks).
+- **Monitor for inconsistencies** between Redis and PostgreSQL (can create a reconciliation job).
+- **Ensure idempotency**: Like/dislike operations should be idempotent (multiple identical requests have same effect as one).
 
 ### 2.4 `app_user_images`
 
@@ -121,6 +150,31 @@ Profile images associated with an `app_user`.
 **Relationships**
 
 * Many images belong to one `app_user`.
+
+### 2.5 `user_tokens`
+
+Stores Spotify OAuth access and refresh tokens for each user. Tokens are used to authenticate Spotify API requests on behalf of users.
+
+**Columns**
+
+* `id: UUID` – Primary key.
+* `app_user_id: UUID` – FK → `app_user.id` (unique, one token record per user).
+* `access_token: String` – Spotify access token (should be encrypted at rest).
+* `refresh_token: String` – Spotify refresh token (should be encrypted at rest).
+* `token_type: String` – Token type (usually `Bearer`).
+* `expires_at: Instant` – When the access token expires (used to determine when to refresh).
+* `scope: String` – OAuth scopes granted (comma-separated, e.g., `user-read-email,user-read-private`).
+
+**Relationships**
+
+* One `user_tokens` row per `app_user` (one-to-one relationship).
+
+**Business rules**
+
+* `(app_user_id)` should be unique (one token record per user).
+* Access tokens should be encrypted at rest for security.
+* When access token expires, use `refresh_token` to obtain a new access token via Spotify Token API.
+* Tokens are updated during OAuth callback and token refresh operations.
 
 ---
 
@@ -144,7 +198,9 @@ Represents a PartyWave room where users listen together.
 
 * Many‑to‑many with `tag` via `room_tag`.
 * One‑to‑many with `room_member`.
-* One‑to‑many with `playlist_item`, `chat_message`, `vote`, `playlist_item_stats` (via foreign keys).
+* One‑to‑many with `room_access` (for private rooms).
+* One‑to‑many with `room_invitation` (for private rooms).
+* One‑to‑many with `chat_message`, `vote` (via foreign keys).
 
 ### 3.2 `tag`
 
@@ -203,82 +259,61 @@ Defines available roles for room membership.
 
 Used by `room_member.role`.
 
----
+### 3.6 `room_access`
 
-## 4. Track & Playlist Domain
-
-### 4.1 `track`
-
-Metadata about a track from an external source (Spotify, etc.).
-
-**Columns**
-
-* `id: UUID` – Primary key.
-* `source_id: String` – External source identifier (e.g. Spotify track ID).
-* `source_uri: String` – External URI for the track.
-* `name: String` – Track title.
-* `artist: String` – Artist name.
-* `album: String` – Album name.
-* `duration_ms: Long` – Duration in milliseconds.
-
-One `track` can be referenced by many `playlist_item` rows across different rooms.
-
-### 4.2 `playlist_item`
-
-Represents one track inside a room’s playlist.
+Explicit access grants for private rooms. When a room is private (`is_public = false`), users must either:
+- Be granted explicit access via this table, or
+- Use a valid invitation token (see `room_invitation`).
 
 **Columns**
 
 * `id: UUID` – Primary key.
 * `room_id: UUID` – FK → `room.id`.
-* `track_id: UUID` – FK → `track.id`.
-* `added_by_id: UUID` – FK → `app_user.id` (who added the track).
-* `stats` – Conceptual one‑to‑many relationship to `playlist_item_stats` (not a physical column; implemented via the `playlist_item_stats.playlist_item_id` foreign key).
-* `position: Integer` – Position within the room playlist (optional if Redis order is canonical; still useful for DB queries).
-* `status: playlist_item_status` – Queue state (`QUEUED`, `PLAYING`, `PLAYED`, `SKIPPED`).
+* `app_user_id: UUID` – FK → `app_user.id` (user granted access).
+* `granted_by_id: UUID` – FK → `app_user.id` (who granted the access, typically room owner).
+* `granted_at: Instant` – When access was granted.
 
 **Relationships**
 
-* Many `playlist_item` per `room`.
-* Many `playlist_item` per `track`.
-* Many `playlist_item` per `app_user` (as adder).
-* One‑to‑many to `playlist_item_stats` (likes/dislikes per user).
+* Many `room_access` rows per `room` (one per granted user).
+* Many `room_access` rows per `app_user` (user can have access to multiple private rooms).
 
-### 4.3 `playlist_item_status` (enum)
+**Business rules**
 
-Possible states of a playlist item:
+* A given `(room_id, app_user_id)` pair should be unique.
+* When a user joins a private room via `room_access`, they should also be added to `room_member`.
+* Room owners and moderators can grant access to other users.
 
-* `QUEUED` – In the queue, not yet playing.
-* `PLAYING` – Currently playing in the room.
-* `PLAYED` – Finished playing.
-* `SKIPPED` – Skipped before finishing.
+### 3.7 `room_invitation`
 
-Used by `playlist_item.status`.
-
-### 4.4 `playlist_item_stats`
-
-Per‑user like/dislike for a specific playlist item.
+Invitation tokens for private rooms. Allows room owners to generate shareable invitation links/tokens.
 
 **Columns**
 
 * `id: UUID` – Primary key.
-* `playlist_item_id: UUID` – FK → `playlist_item.id`.
-* `user_id: UUID` – FK → `app_user.id`.
-* `stat_type: playlist_item_stats` – `LIKE` or `DISLIKE`.
+* `room_id: UUID` – FK → `room.id`.
+* `token: String` – Unique invitation token (can be UUID or custom string).
+* `created_by_id: UUID` – FK → `app_user.id` (who created the invitation, typically room owner).
+* `created_at: Instant` – When invitation was created.
+* `expires_at: Instant` – Optional expiration time (NULL = no expiration).
+* `max_uses: Integer` – Maximum number of times this invitation can be used (NULL = unlimited).
+* `used_count: Integer` – Current usage count (default 0).
+* `is_active: Boolean` – Whether the invitation is still valid (can be revoked).
+
+**Relationships**
+
+* Many `room_invitation` rows per `room` (multiple invitations can exist).
+* One `room_invitation` belongs to one `app_user` (creator).
 
 **Business rules**
 
-* A given `(playlist_item_id, user_id)` pair should be unique.
-* `LIKE` increments and `DISLIKE` increments can be aggregated into `app_user_stats` for the user who added the track (`playlist_item.added_by_id`).
-
-### 4.5 `playlist_item_stats` (enum)
-
-Values:
-
-* `LIKE`
-* `DISLIKE`
-
-Used by `playlist_item_stats.stat_type`.
+* `token` should be unique across all invitations.
+* When a user joins via invitation token:
+  - Validate token exists, is active, not expired, and hasn't exceeded `max_uses`.
+  - Increment `used_count`.
+  - Optionally create `room_access` record for audit trail.
+  - Create `room_member` record.
+* Invitations can be revoked by setting `is_active = false`.
 
 ---
 
@@ -313,12 +348,12 @@ Represents a vote either to **skip the current track** or to **kick a user** fro
 * `room_id: UUID` – FK → `room.id`.
 * `voter_id: UUID` – FK → `app_user.id` (who cast the vote).
 * `vote_type: VOTE_TYPE` – `SKIPTRACK` or `KICKUSER`.
-* `playlist_item_id: UUID` – FK → `playlist_item.id` (used when `vote_type = SKIPTRACK`).
+* `playlist_item_id: String` – UUID as string (used when `vote_type = SKIPTRACK`). This references a playlist item ID stored in Redis, not a PostgreSQL foreign key.
 * `target_user_id: UUID` – FK → `app_user.id` (used when `vote_type = KICKUSER`).
 
 **Business rules**
 
-* For `SKIPTRACK` votes, `(room_id, voter_id, playlist_item_id)` should be unique.
+* For `SKIPTRACK` votes, `(room_id, voter_id, playlist_item_id)` should be unique. Note: `playlist_item_id` is a string UUID referencing a Redis-stored playlist item.
 * For `KICKUSER` votes, `(room_id, voter_id, target_user_id)` should be unique.
 * Aggregation and threshold logic for skipping/kicking are handled by services and can leverage Redis counters.
 
@@ -337,23 +372,33 @@ Used by `vote.vote_type`.
 
 While this document is PostgreSQL‑centric, agents should be aware of how it interacts with the Redis layer:
 
-* **Playlist ordering**
+* **Playlist items and tracks**
 
-  * Redis: `partywave:room:{roomId}:playlist` holds an ordered list of `playlist_item.id` values.
-  * PostgreSQL: `playlist_item` holds full metadata and status for each entry.
-
+  * Redis: All playlist items, track metadata, and like/dislike statistics are stored in Redis only.
+ 
 * **Playback state**
 
   * Redis stores the active playback hash per room.
-  * PostgreSQL does **not** maintain a dedicated playback table; only `playlist_item.status` is persisted.
 
 * **Online members**
 
   * Redis: `partywave:room:{roomId}:members:online` contains the set of online `app_user.id`s.
   * PostgreSQL: `room_member` stores long‑term membership records.
 
-* **Votes, likes, dislikes**
+* **Votes**
 
-  * PostgreSQL stores the detailed per‑user records (`vote` and `playlist_item_stats`).
+  * PostgreSQL stores vote records (`vote` table) for skip and kick actions.
+  * Note: `vote.playlist_item_id` is a string UUID referencing a Redis-stored playlist item, not a PostgreSQL foreign key.
 
-This division of responsibilities keeps PostgreSQL as the **authoritative history store**, while Redis provides a **fast runtime state layer** for PartyWave.
+* **User statistics**
+
+  * PostgreSQL: `app_user_stats` stores aggregated like/dislike totals for users.
+  * **Important**: When a playlist item in Redis receives a like or dislike, the `app_user_stats` table must be updated for the user who added that track. This ensures statistics persist even after rooms close.
+
+* **User tokens**
+
+  * PostgreSQL: `user_tokens` stores Spotify OAuth access and refresh tokens for each user.
+  * Tokens are used to authenticate Spotify API requests (search, playback, user library operations).
+  * Access tokens expire and must be refreshed using the refresh token before making API calls.
+
+This division of responsibilities keeps PostgreSQL as the **authoritative persistent store** for users, rooms, votes, and user tokens, while Redis provides a **fast runtime state layer** for playlist items, tracks, and their statistics.
