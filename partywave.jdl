@@ -1,11 +1,21 @@
-/**
- * PartyWave Application JDL Model
- * 
- * This JDL file defines all PostgreSQL entities for the PartyWave synchronized music listening platform.
- * 
- * Note: Playlist items, track metadata, and like/dislike statistics are stored in Redis only
- * and are not represented here. Only persistent PostgreSQL entities are included.
- */
+
+application {
+  config {
+    baseName partywave
+    applicationType monolith
+    packageName com.partywave.backend
+    authenticationType jwt
+    prodDatabaseType postgresql
+    devDatabaseType postgresql
+    clientFramework react
+    buildTool maven
+    languages [en, tr]
+    nativeLanguage en
+    testFrameworks []
+    jhiPrefix pw
+  }
+  entities *
+}
 
 // Enums
 enum AppUserStatus {
@@ -14,169 +24,174 @@ enum AppUserStatus {
   BANNED
 }
 
+enum RoomMemberRole {
+  OWNER,
+  DJ,
+  MODERATOR,
+  PARTICIPANT
+}
+
 enum VoteType {
   SKIPTRACK,
   KICKUSER
 }
 
 // Entities
+
+/**
+ * Represents a PartyWave user linked to a Spotify account.
+ */
 entity AppUser {
-  spotifyUserId String required unique
-  displayName String required
-  email String required
-  country String
-  href String
-  url String
-  type String
-  ipAddress String
-  lastActiveAt Instant
+  spotifyUserId String required unique,
+  displayName String required,
+  email String required,
+  country String,
+  href String,
+  url String,
+  type String,
+  ipAddress String,
+  lastActiveAt Instant,
   status AppUserStatus
 }
 
+/**
+ * Aggregated statistics for a user.
+ */
 entity AppUserStats {
-  totalLike Integer default(0) required
-  totalDislike Integer default(0) required
+  totalLike Integer,
+  totalDislike Integer
 }
 
-entity AppUserImages {
-  url String required
-  height String
+/**
+ * Profile images associated with an AppUser.
+ */
+entity AppUserImage {
+  url String required,
+  height String,
   width String
 }
 
-entity UserTokens {
-  accessToken String required
-  refreshToken String required
-  tokenType String default("Bearer") required
-  expiresAt Instant required
+/**
+ * Stores Spotify OAuth access and refresh tokens.
+ */
+entity UserToken {
+  accessToken String required,
+  refreshToken String required,
+  tokenType String,
+  expiresAt Instant,
   scope String
 }
 
-entity RefreshTokens {
-  tokenHash String required unique
-  expiresAt Instant required
-  createdAt Instant required
-  revokedAt Instant
-  deviceInfo String
+/**
+ * Stores PartyWave JWT refresh tokens (optional but recommended for security).
+ */
+entity RefreshToken {
+  tokenHash String required unique,
+  expiresAt Instant required,
+  createdAt Instant required,
+  revokedAt Instant,
+  deviceInfo String,
   ipAddress String
 }
 
+/**
+ * Represents a PartyWave room.
+ */
 entity Room {
-  name String required
-  description TextBlob
-  maxParticipants Integer required min(1)
+  name String required,
+  description String,
+  maxParticipants Integer,
   isPublic Boolean required
-  createdAt Instant
 }
 
+/**
+ * Tags for categorizing rooms.
+ */
 entity Tag {
   name String required unique
 }
 
-entity RoomTag {
-}
-
-entity RoomMemberRole {
-  name String required unique
-}
-
+/**
+ * Represents a user's membership in a room.
+ */
 entity RoomMember {
-  joinedAt Instant required
-  lastActiveAt Instant required
+  joinedAt Instant,
+  lastActiveAt Instant,
+  role RoomMemberRole
 }
 
+/**
+ * Explicit access grants for private rooms.
+ */
 entity RoomAccess {
-  grantedAt Instant required
+  grantedAt Instant
 }
 
+/**
+ * Invitation tokens for private rooms.
+ */
 entity RoomInvitation {
-  token String required unique
-  createdAt Instant required
-  expiresAt Instant
-  maxUses Integer
-  usedCount Integer default(0) required
-  isActive Boolean default(true) required
+  token String required unique,
+  createdAt Instant,
+  expiresAt Instant,
+  maxUses Integer,
+  usedCount Integer,
+  isActive Boolean
 }
 
+/**
+ * Chat messages sent in a room.
+ */
 entity ChatMessage {
-  content String required maxlength(1000)
-  sentAt Instant required
+  content String required,
+  sentAt Instant
 }
 
+/**
+ * Votes to skip tracks or kick users.
+ */
 entity Vote {
-  voteType VoteType required
-  playlistItemId String
-  createdAt Instant required
+  voteType VoteType,
+  playlistItemId String // Reference to Redis UUID
 }
 
 // Relationships
+
 relationship OneToOne {
-  AppUser{stats} to AppUserStats
-  AppUser{tokens} to UserTokens
+  // AppUser owns the relationship (has FK to AppUserStats)
+  AppUser{appUserStats} to AppUserStats
+  // UserToken owns the relationship (has FK to AppUser)
+  UserToken{appUser(displayName)} to AppUser{userToken}
 }
 
-relationship ManyToOne {
-  AppUserImages{user} to AppUser required
-  RefreshTokens{user} to AppUser
-  UserTokens{user} to AppUser required
-  Room{owner} to AppUser required
-  RoomAccess{grantedBy} to AppUser required
-  RoomAccess{user} to AppUser required
-  RoomInvitation{createdBy} to AppUser required
-  RoomMember{user} to AppUser required
-  RoomMember{role} to RoomMemberRole required
-  ChatMessage{sender} to AppUser required
-  ChatMessage{room} to Room required
-  Vote{voter} to AppUser required
-  Vote{targetUser} to AppUser
-  Vote{room} to Room required
+relationship OneToMany {
+  AppUser{images} to AppUserImage{appUser(displayName)}
+  AppUser{refreshTokens} to RefreshToken{appUser(displayName)}
+  
+  Room{members} to RoomMember{room(name)}
+  AppUser{memberships} to RoomMember{appUser(displayName)}
+
+  Room{accesses} to RoomAccess{room(name)}
+  AppUser{receivedAccesses} to RoomAccess{appUser(displayName)}
+  AppUser{grantedAccesses} to RoomAccess{grantedBy(displayName)}
+  
+  Room{invitations} to RoomInvitation{room(name)}
+  AppUser{createdInvitations} to RoomInvitation{createdBy(displayName)}
+
+  Room{messages} to ChatMessage{room(name)}
+  AppUser{messages} to ChatMessage{sender(displayName)}
+
+  Room{votes} to Vote{room(name)}
+  AppUser{castVotes} to Vote{voter(displayName)}
+  AppUser{receivedVotes} to Vote{targetUser(displayName)}
 }
 
 relationship ManyToMany {
-  Room{tags} to Tag through RoomTag
+  Room{tags(name)} to Tag{rooms}
 }
 
-// Pagination
-paginate AppUser with pagination
-paginate Room with pagination
-paginate ChatMessage with pagination
-paginate Vote with pagination
-paginate RoomMember with pagination
-
-// DTOs
+// Settings
+paginate Room, ChatMessage with infinite-scroll
+paginate AppUser, RoomMember, Vote with pagination
 dto * with mapstruct
-
-// Service
-service * with serviceImpl
-
-// Note: JHipster automatically adds auditing fields (createdBy, lastModifiedBy, createdDate, lastModifiedDate) 
-// and UUID primary keys to all entities
-
-// Filtering
-filter *
-
-// Application Configuration
-application {
-  config {
-    baseName partywave
-    applicationType monolith
-    packageName com.partywave
-    databaseType postgresql
-    devDatabaseType postgresql
-    prodDatabaseType postgresql
-    cacheProvider redis
-    enableHibernateCache true
-    enableSwaggerCodegen false
-    authenticationType jwt
-    enableTranslation false
-    nativeLanguage en
-    languages [en, tr]
-    buildTool maven
-    clientFramework react
-    clientPackageManager npm
-    testFrameworks [cypress]
-  }
-  
-  entities *
-}
-
+service * with serviceClass

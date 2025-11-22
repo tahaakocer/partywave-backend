@@ -1,0 +1,22 @@
+{
+  "annotations": {
+    "changelogDate": "20251122163512"
+  },
+  "applications": ["partywave"],
+  "documentation": "Aggregated statistics for a user.",
+  "dto": "mapstruct",
+  "fields": [
+    {
+      "fieldName": "totalLike",
+      "fieldType": "Integer"
+    },
+    {
+      "fieldName": "totalDislike",
+      "fieldType": "Integer"
+    }
+  ],
+  "name": "AppUserStats",
+  "relationships": [],
+  "searchEngine": "no",
+  "service": "serviceClass"
+}

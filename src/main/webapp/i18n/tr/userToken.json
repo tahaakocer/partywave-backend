@@ -1,0 +1,29 @@
+{
+  "partywaveApp": {
+    "userToken": {
+      "home": {
+        "title": "User Tokens",
+        "refreshListLabel": "Listeyi yenile",
+        "createLabel": "Yeni User Token ekle",
+        "createOrEditLabel": "Yeni User Token ekle veya guncelle",
+        "notFound": "User Tokens kaydi bulunamadi"
+      },
+      "created": "{{ param }} ID ile bir User Token eklendi",
+      "updated": "{{ param }} nolu User Token guncellendi",
+      "deleted": "{{ param }} nolu User Token silindi",
+      "delete": {
+        "question": "{{ id }} nolu User Token silinecek. Devem etmek istiyor musunuz?"
+      },
+      "detail": {
+        "title": "User Token"
+      },
+      "id": "ID",
+      "accessToken": "Access Token",
+      "refreshToken": "Refresh Token",
+      "tokenType": "Token Type",
+      "expiresAt": "Expires At",
+      "scope": "Scope",
+      "appUser": "App User"
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "partywaveApp": {
+    "vote": {
+      "home": {
+        "title": "Votes",
+        "refreshListLabel": "Listeyi yenile",
+        "createLabel": "Yeni Vote ekle",
+        "createOrEditLabel": "Yeni Vote ekle veya guncelle",
+        "notFound": "Votes kaydi bulunamadi"
+      },
+      "created": "{{ param }} ID ile bir Vote eklendi",
+      "updated": "{{ param }} nolu Vote guncellendi",
+      "deleted": "{{ param }} nolu Vote silindi",
+      "delete": {
+        "question": "{{ id }} nolu Vote silinecek. Devem etmek istiyor musunuz?"
+      },
+      "detail": {
+        "title": "Vote"
+      },
+      "id": "ID",
+      "voteType": "Vote Type",
+      "playlistItemId": "Playlist Item Id",
+      "room": "Room",
+      "voter": "Voter",
+      "targetUser": "Target User"
+    }
+  }
+}

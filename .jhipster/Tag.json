@@ -1,0 +1,27 @@
+{
+  "annotations": {
+    "changelogDate": "20251122164012"
+  },
+  "applications": ["partywave"],
+  "documentation": "Tags for categorizing rooms.",
+  "dto": "mapstruct",
+  "fields": [
+    {
+      "fieldName": "name",
+      "fieldType": "String",
+      "fieldValidateRules": ["required", "unique"]
+    }
+  ],
+  "name": "Tag",
+  "relationships": [
+    {
+      "otherEntityName": "room",
+      "otherEntityRelationshipName": "tags",
+      "relationshipName": "rooms",
+      "relationshipSide": "right",
+      "relationshipType": "many-to-many"
+    }
+  ],
+  "searchEngine": "no",
+  "service": "serviceClass"
+}

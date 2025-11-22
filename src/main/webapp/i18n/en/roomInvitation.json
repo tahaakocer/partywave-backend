@@ -1,0 +1,31 @@
+{
+  "partywaveApp": {
+    "roomInvitation": {
+      "home": {
+        "title": "Room Invitations",
+        "refreshListLabel": "Refresh list",
+        "createLabel": "Create a new Room Invitation",
+        "createOrEditLabel": "Create or edit a Room Invitation",
+        "notFound": "No Room Invitations found"
+      },
+      "created": "A new Room Invitation is created with identifier {{ param }}",
+      "updated": "A Room Invitation is updated with identifier {{ param }}",
+      "deleted": "A Room Invitation is deleted with identifier {{ param }}",
+      "delete": {
+        "question": "Are you sure you want to delete Room Invitation {{ id }}?"
+      },
+      "detail": {
+        "title": "Room Invitation"
+      },
+      "id": "ID",
+      "token": "Token",
+      "createdAt": "Created At",
+      "expiresAt": "Expires At",
+      "maxUses": "Max Uses",
+      "usedCount": "Used Count",
+      "isActive": "Is Active",
+      "room": "Room",
+      "createdBy": "Created By"
+    }
+  }
+}

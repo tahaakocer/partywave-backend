@@ -1,0 +1,44 @@
+{
+  "partywaveApp": {
+    "appUser": {
+      "home": {
+        "title": "App Users",
+        "refreshListLabel": "Refresh list",
+        "createLabel": "Create a new App User",
+        "createOrEditLabel": "Create or edit a App User",
+        "notFound": "No App Users found"
+      },
+      "created": "A new App User is created with identifier {{ param }}",
+      "updated": "A App User is updated with identifier {{ param }}",
+      "deleted": "A App User is deleted with identifier {{ param }}",
+      "delete": {
+        "question": "Are you sure you want to delete App User {{ id }}?"
+      },
+      "detail": {
+        "title": "App User"
+      },
+      "id": "ID",
+      "spotifyUserId": "Spotify User Id",
+      "displayName": "Display Name",
+      "email": "Email",
+      "country": "Country",
+      "href": "Href",
+      "url": "Url",
+      "type": "Type",
+      "ipAddress": "Ip Address",
+      "lastActiveAt": "Last Active At",
+      "status": "Status",
+      "appUserStats": "App User Stats",
+      "images": "Images",
+      "refreshTokens": "Refresh Tokens",
+      "memberships": "Memberships",
+      "receivedAccesses": "Received Accesses",
+      "grantedAccesses": "Granted Accesses",
+      "createdInvitations": "Created Invitations",
+      "messages": "Messages",
+      "castVotes": "Cast Votes",
+      "receivedVotes": "Received Votes",
+      "userToken": "User Token"
+    }
+  }
+}

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:ext="http://www.liquibase.org/xml/ns/dbchangelog-ext"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd
+                        http://www.liquibase.org/xml/ns/dbchangelog-ext http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-ext.xsd">
+    <!--
+        Added the constraints for entity Vote.
+    -->
+    <changeSet id="20251122164512-2" author="jhipster">
+
+        <addForeignKeyConstraint baseColumnNames="room_id"
+                                 baseTableName="vote"
+                                 constraintName="fk_vote__room_id"
+                                 referencedColumnNames="id"
+                                 referencedTableName="room"
+                                 />
+
+        <addForeignKeyConstraint baseColumnNames="voter_id"
+                                 baseTableName="vote"
+                                 constraintName="fk_vote__voter_id"
+                                 referencedColumnNames="id"
+                                 referencedTableName="app_user"
+                                 />
+
+        <addForeignKeyConstraint baseColumnNames="target_user_id"
+                                 baseTableName="vote"
+                                 constraintName="fk_vote__target_user_id"
+                                 referencedColumnNames="id"
+                                 referencedTableName="app_user"
+                                 />
+    </changeSet>
+</databaseChangeLog>

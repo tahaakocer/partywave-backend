@@ -1,0 +1,44 @@
+{
+  "partywaveApp": {
+    "appUser": {
+      "home": {
+        "title": "App Users",
+        "refreshListLabel": "Listeyi yenile",
+        "createLabel": "Yeni App User ekle",
+        "createOrEditLabel": "Yeni App User ekle veya guncelle",
+        "notFound": "App Users kaydi bulunamadi"
+      },
+      "created": "{{ param }} ID ile bir App User eklendi",
+      "updated": "{{ param }} nolu App User guncellendi",
+      "deleted": "{{ param }} nolu App User silindi",
+      "delete": {
+        "question": "{{ id }} nolu App User silinecek. Devem etmek istiyor musunuz?"
+      },
+      "detail": {
+        "title": "App User"
+      },
+      "id": "ID",
+      "spotifyUserId": "Spotify User Id",
+      "displayName": "Display Name",
+      "email": "Email",
+      "country": "Country",
+      "href": "Href",
+      "url": "Url",
+      "type": "Type",
+      "ipAddress": "Ip Address",
+      "lastActiveAt": "Last Active At",
+      "status": "Status",
+      "appUserStats": "App User Stats",
+      "images": "Images",
+      "refreshTokens": "Refresh Tokens",
+      "memberships": "Memberships",
+      "receivedAccesses": "Received Accesses",
+      "grantedAccesses": "Granted Accesses",
+      "createdInvitations": "Created Invitations",
+      "messages": "Messages",
+      "castVotes": "Cast Votes",
+      "receivedVotes": "Received Votes",
+      "userToken": "User Token"
+    }
+  }
+}
