@@ -1,0 +1,182 @@
+/**
+ * PartyWave Application JDL Model
+ * 
+ * This JDL file defines all PostgreSQL entities for the PartyWave synchronized music listening platform.
+ * 
+ * Note: Playlist items, track metadata, and like/dislike statistics are stored in Redis only
+ * and are not represented here. Only persistent PostgreSQL entities are included.
+ */
+
+// Enums
+enum AppUserStatus {
+  ONLINE,
+  OFFLINE,
+  BANNED
+}
+
+enum VoteType {
+  SKIPTRACK,
+  KICKUSER
+}
+
+// Entities
+entity AppUser {
+  spotifyUserId String required unique
+  displayName String required
+  email String required
+  country String
+  href String
+  url String
+  type String
+  ipAddress String
+  lastActiveAt Instant
+  status AppUserStatus
+}
+
+entity AppUserStats {
+  totalLike Integer default(0) required
+  totalDislike Integer default(0) required
+}
+
+entity AppUserImages {
+  url String required
+  height String
+  width String
+}
+
+entity UserTokens {
+  accessToken String required
+  refreshToken String required
+  tokenType String default("Bearer") required
+  expiresAt Instant required
+  scope String
+}
+
+entity RefreshTokens {
+  tokenHash String required unique
+  expiresAt Instant required
+  createdAt Instant required
+  revokedAt Instant
+  deviceInfo String
+  ipAddress String
+}
+
+entity Room {
+  name String required
+  description TextBlob
+  maxParticipants Integer required min(1)
+  isPublic Boolean required
+  createdAt Instant
+}
+
+entity Tag {
+  name String required unique
+}
+
+entity RoomTag {
+}
+
+entity RoomMemberRole {
+  name String required unique
+}
+
+entity RoomMember {
+  joinedAt Instant required
+  lastActiveAt Instant required
+}
+
+entity RoomAccess {
+  grantedAt Instant required
+}
+
+entity RoomInvitation {
+  token String required unique
+  createdAt Instant required
+  expiresAt Instant
+  maxUses Integer
+  usedCount Integer default(0) required
+  isActive Boolean default(true) required
+}
+
+entity ChatMessage {
+  content String required maxlength(1000)
+  sentAt Instant required
+}
+
+entity Vote {
+  voteType VoteType required
+  playlistItemId String
+  createdAt Instant required
+}
+
+// Relationships
+relationship OneToOne {
+  AppUser{stats} to AppUserStats
+  AppUser{tokens} to UserTokens
+}
+
+relationship ManyToOne {
+  AppUserImages{user} to AppUser required
+  RefreshTokens{user} to AppUser
+  UserTokens{user} to AppUser required
+  Room{owner} to AppUser required
+  RoomAccess{grantedBy} to AppUser required
+  RoomAccess{user} to AppUser required
+  RoomInvitation{createdBy} to AppUser required
+  RoomMember{user} to AppUser required
+  RoomMember{role} to RoomMemberRole required
+  ChatMessage{sender} to AppUser required
+  ChatMessage{room} to Room required
+  Vote{voter} to AppUser required
+  Vote{targetUser} to AppUser
+  Vote{room} to Room required
+}
+
+relationship ManyToMany {
+  Room{tags} to Tag through RoomTag
+}
+
+// Pagination
+paginate AppUser with pagination
+paginate Room with pagination
+paginate ChatMessage with pagination
+paginate Vote with pagination
+paginate RoomMember with pagination
+
+// DTOs
+dto * with mapstruct
+
+// Service
+service * with serviceImpl
+
+// Note: JHipster automatically adds auditing fields (createdBy, lastModifiedBy, createdDate, lastModifiedDate) 
+// and UUID primary keys to all entities
+
+// Filtering
+filter *
+
+// Application Configuration
+application {
+  config {
+    baseName partywave
+    applicationType monolith
+    packageName com.partywave
+    databaseType postgresql
+    devDatabaseType postgresql
+    prodDatabaseType postgresql
+    cacheProvider redis
+    enableHibernateCache true
+    enableSwaggerCodegen false
+    authenticationType jwt
+    enableTranslation false
+    nativeLanguage en
+    languages [en, tr]
+    buildTool maven
+    clientFramework react
+    clientPackageManager npm
+    testFrameworks [cypress]
+  }
+  
+  entities *
+}
+
