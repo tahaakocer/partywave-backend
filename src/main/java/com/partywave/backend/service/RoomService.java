@@ -9,6 +9,7 @@ import com.partywave.backend.repository.AppUserRepository;
 import com.partywave.backend.repository.RoomMemberRepository;
 import com.partywave.backend.repository.RoomRepository;
 import com.partywave.backend.repository.TagRepository;
+import com.partywave.backend.repository.specification.RoomSpecifications;
 import com.partywave.backend.service.dto.CreateRoomRequestDTO;
 import com.partywave.backend.service.dto.RoomResponseDTO;
 import com.partywave.backend.service.dto.TagDTO;
@@ -20,6 +21,10 @@ import java.util.*;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -247,5 +252,97 @@ public class RoomService {
         }
 
         return Optional.of(response);
+    }
+
+    /**
+     * Find public rooms with optional filtering using JPA Specifications.
+     *
+     * Workflow (based on PROJECT_OVERVIEW.md section 2.3):
+     * 1. Build dynamic query using Specifications (type-safe, composable)
+     * 2. Filter rooms by is_public = true
+     * 3. Optionally filter by tags (case-insensitive, OR logic)
+     * 4. Optionally search by name/description (case-insensitive)
+     * 5. Fetch tags for paginated results (single batch query)
+     * 6. Batch load member counts (single GROUP BY query, no N+1 problem)
+     * 7. Load online member counts from Redis
+     * 8. Return paginated results with metadata:
+     *    - Room details (name, description, tags, max_participants)
+     *    - Current member count (from PostgreSQL room_member table)
+     *    - Online member count (from Redis)
+     *
+     * Performance improvements over previous implementation:
+     * - Uses Specifications for type-safe, maintainable queries
+     * - Batch loads member counts (1 query instead of N queries)
+     * - Uses EXISTS subquery for tag filtering (avoids LEFT JOIN issues)
+     *
+     * @param tags List of tag names to filter by, or null for no tag filtering
+     * @param search Search term for name/description, or null for no search
+     * @param pageable Pagination parameters (page, size, sort)
+     * @return Page of RoomResponseDTO matching the criteria
+     */
+    @Transactional(readOnly = true)
+    public Page<RoomResponseDTO> findPublicRooms(List<String> tags, String search, Pageable pageable) {
+        log.debug("Finding public rooms with tags: {}, search: {}, page: {}", tags, search, pageable);
+
+        // Step 1: Normalize tags to lowercase for case-insensitive matching
+        List<String> normalizedTags = Collections.emptyList();
+        if (tags != null && !tags.isEmpty()) {
+            normalizedTags = tags
+                .stream()
+                .map(String::toLowerCase)
+                .map(String::trim)
+                .filter(t -> !t.isEmpty())
+                .collect(Collectors.toList());
+        }
+
+        // Step 2: Build specification using composable predicates
+        Specification<Room> spec = RoomSpecifications.findPublicRooms(normalizedTags, search);
+
+        // Step 3: Execute query with pagination (tags not eagerly loaded)
+        Page<Room> roomPage = roomRepository.findAll(spec, pageable);
+
+        // Early return if no results
+        if (roomPage.isEmpty()) {
+            return new PageImpl<>(Collections.emptyList(), pageable, 0);
+        }
+
+        // Step 4: Batch load tags for all rooms in this page (single query)
+        List<Room> roomsWithTags = roomRepository.fetchBagRelationships(roomPage.getContent());
+
+        // Step 5: Batch load member counts for all rooms (single GROUP BY query)
+        List<UUID> roomIds = roomsWithTags.stream().map(Room::getId).collect(Collectors.toList());
+        Map<UUID, Long> memberCountMap = roomRepository
+            .countMembersByRoomIds(roomIds)
+            .stream()
+            .collect(Collectors.toMap(arr -> (UUID) arr[0], arr -> (Long) arr[1]));
+
+        // Step 6: Convert to DTOs with enriched metadata
+        List<RoomResponseDTO> roomDTOs = roomsWithTags
+            .stream()
+            .map(room -> {
+                RoomResponseDTO response = roomMapper.toDto(room);
+
+                // Set member count from batch query result (default to 0 if room has no members)
+                Long memberCount = memberCountMap.getOrDefault(room.getId(), 0L);
+                response.setMemberCount(memberCount.intValue());
+
+                // Set online member count from Redis
+                String roomIdStr = room.getId().toString();
+                long onlineCount = onlineMembersRedisService.getOnlineMemberCount(roomIdStr);
+                response.setOnlineMemberCount(onlineCount);
+
+                // Convert tags to TagDTO
+                if (room.getTags() != null && !room.getTags().isEmpty()) {
+                    List<TagDTO> tagDTOs = room.getTags().stream().map(tagMapper::toDto).collect(Collectors.toList());
+                    response.setTags(tagDTOs);
+                } else {
+                    response.setTags(Collections.emptyList());
+                }
+
+                return response;
+            })
+            .collect(Collectors.toList());
+
+        return new PageImpl<>(roomDTOs, pageable, roomPage.getTotalElements());
     }
 }

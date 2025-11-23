@@ -7,15 +7,22 @@ import com.partywave.backend.service.dto.RoomResponseDTO;
 import jakarta.validation.Valid;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.Arrays;
+import java.util.List;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
+import tech.jhipster.web.util.PaginationUtil;
 
 /**
  * REST controller for managing PartyWave rooms.
@@ -36,6 +43,41 @@ public class RoomController {
     public RoomController(RoomService roomService, JwtTokenProvider jwtTokenProvider) {
         this.roomService = roomService;
         this.jwtTokenProvider = jwtTokenProvider;
+    }
+
+    /**
+     * GET /api/rooms : Get public rooms with optional filtering.
+     *
+     * Returns a paginated list of public rooms with optional tag filtering and search.
+     * Each room includes:
+     * - Room metadata (name, description, tags, max_participants)
+     * - Current member count (from PostgreSQL)
+     * - Online member count (from Redis)
+     *
+     * Based on PROJECT_OVERVIEW.md section 2.3 - Room Discovery.
+     *
+     * @param tags Comma-separated list of tags to filter by (e.g., "lofi,90s"), optional
+     * @param search Search term for name/description (e.g., "chill"), optional
+     * @param pageable Pagination parameters (page, size, sort)
+     * @return ResponseEntity with status 200 (OK) and paginated list of RoomResponseDTO
+     */
+    @GetMapping
+    public ResponseEntity<List<RoomResponseDTO>> getPublicRooms(
+        @RequestParam(value = "tags", required = false) String tags,
+        @RequestParam(value = "search", required = false) String search,
+        Pageable pageable
+    ) {
+        log.debug("REST request to get public rooms with tags: {}, search: {}", tags, search);
+
+        // Parse comma-separated tags
+        List<String> tagList = null;
+        if (tags != null && !tags.trim().isEmpty()) {
+            tagList = Arrays.asList(tags.split(","));
+        }
+
+        Page<RoomResponseDTO> page = roomService.findPublicRooms(tagList, search, pageable);
+        HttpHeaders headers = PaginationUtil.generatePaginationHttpHeaders(ServletUriComponentsBuilder.fromCurrentRequest(), page);
+        return ResponseEntity.ok().headers(headers).body(page.getContent());
     }
 
     /**
