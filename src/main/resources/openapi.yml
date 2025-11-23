@@ -1,0 +1,546 @@
+openapi: 3.0.3
+info:
+  title: PartyWave API
+  description: |
+    PartyWave API documentation for Spotify OAuth2 authentication and JWT token management.
+
+    ## Authentication Flow
+    1. Initiate login via `/api/auth/spotify/login`
+    2. User authorizes on Spotify
+    3. Spotify redirects to `/api/auth/spotify/callback` with authorization code
+    4. Backend exchanges code for tokens and generates PartyWave JWT tokens
+    5. Use refresh token endpoint to get new tokens when access token expires
+
+    ## JWT Token Refresh
+    - Access tokens expire in 15 minutes
+    - Refresh tokens expire in 7 days
+    - Use `/api/auth/refresh` to get new tokens
+    - Token rotation is implemented (old refresh token is revoked)
+  version: 0.0.1
+  contact:
+    name: PartyWave Team
+  license:
+    name: Unlicensed
+
+servers:
+  - url: http://localhost:8080
+    description: Development server
+  - url: https://api.partywave.com
+    description: Production server
+
+tags:
+  - name: Authentication
+    description: API endpoints for Spotify OAuth2 authentication and JWT token management
+  - name: User Authentication
+    description: API endpoints for user authentication and authorization
+  - name: Account
+    description: API endpoints for user account information
+  - name: Rooms
+    description: API endpoints for room management (create, retrieve, join)
+
+paths:
+  /api/auth/spotify/login:
+    get:
+      tags:
+        - Authentication
+      summary: Initiate Spotify OAuth2 login
+      description: |
+        Redirects the user to Spotify's authorization page.
+        Generates a random state parameter for CSRF protection.
+      operationId: spotifyLogin
+      responses:
+        '302':
+          description: Redirect to Spotify authorization URL
+        '500':
+          description: Internal server error
+
+  /api/auth/spotify/callback:
+    get:
+      tags:
+        - Authentication
+      summary: Handle Spotify OAuth2 callback
+      description: |
+        Receives authorization code from Spotify, exchanges it for tokens,
+        fetches user profile, creates/updates AppUser, and generates PartyWave JWT tokens
+        (access and refresh tokens).
+      operationId: spotifyCallback
+      parameters:
+        - name: code
+          in: query
+          required: true
+          description: Authorization code from Spotify
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          description: CSRF protection state parameter
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successfully authenticated and tokens generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JwtTokenResponse'
+        '400':
+          description: Invalid state parameter or request
+        '500':
+          description: Internal server error
+
+  /api/auth/spotify/refresh:
+    post:
+      tags:
+        - Authentication
+      summary: Refresh Spotify access token
+      description: |
+        Refreshes the Spotify access token using a valid Spotify refresh token.
+        This endpoint is used to maintain Spotify API access without re-authentication.
+      operationId: refreshSpotifyToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: Successfully refreshed Spotify access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshTokenResponse'
+        '400':
+          description: Invalid request body
+        '500':
+          description: Internal server error
+
+  /api/auth/refresh:
+    post:
+      tags:
+        - Authentication
+      summary: Refresh PartyWave JWT tokens
+      description: |
+        Refreshes PartyWave JWT tokens using a valid refresh token.
+
+        **Validation Steps:**
+        1. Validates refresh token (signature, expiration, revocation status)
+        2. Checks if user is not banned
+        3. Generates new access token (15 minutes) and refresh token (7 days)
+        4. Implements token rotation by revoking the old refresh token
+      operationId: refreshJwtToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JwtRefreshRequest'
+      responses:
+        '200':
+          description: Successfully refreshed JWT tokens
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JwtTokenResponse'
+        '400':
+          description: Invalid request body
+        '401':
+          description: Invalid, expired, or revoked refresh token, or user is banned
+        '500':
+          description: Internal server error
+
+  /api/auth/logout:
+    post:
+      tags:
+        - Authentication
+      summary: Logout user
+      description: |
+        Revokes the refresh token to log out the user.
+        The refresh token is marked as revoked in the database and can no longer be used to refresh tokens.
+      operationId: logout
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JwtRefreshRequest'
+      responses:
+        '204':
+          description: Successfully logged out (refresh token revoked)
+        '400':
+          description: Invalid request body
+        '500':
+          description: Internal server error
+
+  /api/authenticate:
+    post:
+      tags:
+        - User Authentication
+      summary: Authenticate user
+      description: |
+        Authenticates a user with username and password, and returns a JWT token.
+        The token is also included in the Authorization header as a Bearer token.
+      operationId: authorize
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginVM'
+      responses:
+        '200':
+          description: Successfully authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JWTToken'
+          headers:
+            Authorization:
+              description: Bearer token in Authorization header
+              schema:
+                type: string
+        '400':
+          description: Invalid request body
+        '401':
+          description: Invalid credentials
+    get:
+      tags:
+        - User Authentication
+      summary: Check authentication status
+      description: |
+        Checks if the current user is authenticated.
+        Returns 204 if authenticated, 401 if not authenticated.
+      operationId: isAuthenticated
+      responses:
+        '204':
+          description: User is authenticated
+        '401':
+          description: User is not authenticated
+
+  /api/account:
+    get:
+      tags:
+        - Account
+      summary: Get current user account
+      description: |
+        Returns the current authenticated user's account information including login,
+        authorities, and token details. Requires JWT authentication.
+      operationId: getAccount
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Successfully retrieved user account information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserVM'
+        '401':
+          description: User is not authenticated
+        '500':
+          description: Internal server error
+
+  /api/rooms:
+    post:
+      tags:
+        - Rooms
+      summary: Create a new room
+      description: |
+        Creates a new PartyWave room with the authenticated user as OWNER.
+
+        **Workflow:**
+        1. Validates input (name, max_participants > 0)
+        2. Creates Room entity in PostgreSQL
+        3. Creates RoomMember entity with OWNER role
+        4. Handles tags (creates if missing, normalizes to lowercase)
+        5. Initializes Redis state (empty playlist, playback hash, online members set)
+        6. Adds creator to online members
+        7. Returns room details with member counts
+
+        **JWT Authentication Required**
+      operationId: createRoom
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRoomRequest'
+      responses:
+        '201':
+          description: Room created successfully
+          headers:
+            Location:
+              description: URI of the created room
+              schema:
+                type: string
+                example: /api/rooms/550e8400-e29b-41d4-a716-446655440000
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomResponse'
+        '400':
+          description: Invalid request body (validation errors)
+        '401':
+          description: User is not authenticated or JWT token is invalid
+        '500':
+          description: Internal server error
+
+  /api/rooms/{id}:
+    get:
+      tags:
+        - Rooms
+      summary: Get a room by ID
+      description: |
+        Returns room details including tags, member count, and online member count.
+
+        **JWT Authentication Required**
+      operationId: getRoom
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Room UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Successfully retrieved room details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomResponse'
+        '401':
+          description: User is not authenticated
+        '404':
+          description: Room not found
+        '500':
+          description: Internal server error
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: HTTP
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token authentication
+
+  schemas:
+    JwtTokenResponse:
+      type: object
+      required:
+        - access_token
+        - refresh_token
+        - token_type
+        - expires_in
+      properties:
+        access_token:
+          type: string
+          description: JWT access token (valid for 15 minutes)
+        refresh_token:
+          type: string
+          description: JWT refresh token (valid for 7 days)
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+          description: Access token expiration time in seconds
+          example: 900
+        user:
+          $ref: '#/components/schemas/UserInfo'
+
+    UserInfo:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: User ID (UUID)
+        spotify_user_id:
+          type: string
+          description: Spotify user ID
+        email:
+          type: string
+          format: email
+          description: User email
+        display_name:
+          type: string
+          description: User display name
+
+    JwtRefreshRequest:
+      type: object
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          description: JWT refresh token
+
+    RefreshTokenRequest:
+      type: object
+      required:
+        - refreshToken
+      properties:
+        refreshToken:
+          type: string
+          description: Spotify refresh token
+
+    RefreshTokenResponse:
+      type: object
+      required:
+        - accessToken
+        - expiresIn
+      properties:
+        accessToken:
+          type: string
+          description: New Spotify access token
+        expiresIn:
+          type: integer
+          description: Token expiration time in seconds
+
+    LoginVM:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          description: Username
+        password:
+          type: string
+          format: password
+          description: Password
+        rememberMe:
+          type: boolean
+          description: Remember me option
+          default: false
+
+    JWTToken:
+      type: object
+      required:
+        - id_token
+      properties:
+        id_token:
+          type: string
+          description: JWT token
+
+    UserVM:
+      type: object
+      properties:
+        login:
+          type: string
+          description: User login
+        authorities:
+          type: array
+          items:
+            type: string
+          description: User authorities
+        activated:
+          type: boolean
+          description: Whether user is activated
+        details:
+          type: object
+          additionalProperties: true
+          description: Additional user details from JWT token
+
+    CreateRoomRequest:
+      type: object
+      required:
+        - name
+        - max_participants
+        - is_public
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Room name (required, 1-100 characters)
+          example: Chill Vibes Room
+        description:
+          type: string
+          maxLength: 500
+          description: Room description (optional, max 500 characters)
+          example: Relaxing music for studying
+        tags:
+          type: array
+          items:
+            type: string
+          description: List of tags for room categorization (optional, normalized to lowercase)
+          example: ['lofi', 'chill', 'study']
+        max_participants:
+          type: integer
+          minimum: 1
+          description: Maximum number of participants allowed in the room (required, minimum 1)
+          example: 50
+        is_public:
+          type: boolean
+          description: Whether the room is public (true) or private (false)
+          example: true
+
+    RoomResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Room UUID
+          example: 550e8400-e29b-41d4-a716-446655440000
+        name:
+          type: string
+          description: Room name
+          example: Chill Vibes Room
+        description:
+          type: string
+          description: Room description
+          example: Relaxing music for studying
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tag'
+          description: List of tags associated with the room
+        max_participants:
+          type: integer
+          description: Maximum number of participants allowed
+          example: 50
+        is_public:
+          type: boolean
+          description: Whether the room is public or private
+          example: true
+        created_at:
+          type: string
+          format: date-time
+          description: Timestamp when the room was created (ISO 8601)
+          example: 2025-11-23T10:30:00Z
+        updated_at:
+          type: string
+          format: date-time
+          description: Timestamp when the room was last updated (ISO 8601)
+          example: 2025-11-23T10:30:00Z
+        member_count:
+          type: integer
+          description: Total number of members in the room
+          example: 1
+        online_member_count:
+          type: integer
+          format: int64
+          description: Number of currently online members in the room
+          example: 1
+
+    Tag:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Tag UUID
+        name:
+          type: string
+          description: Tag name (normalized to lowercase)
+          example: lofi
