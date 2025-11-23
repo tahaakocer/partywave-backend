@@ -104,6 +104,7 @@ springdoc:
     enabled: true
   swagger-ui:
     enabled: true
+
 # ===================================================================
 # Application specific properties
 # Add your own application properties here, see the ApplicationProperties class
@@ -114,3 +115,12 @@ springdoc:
 # ===================================================================
 
 # application:
+
+# ===================================================================
+# Spotify OAuth2 Configuration (Development)
+# ===================================================================
+spotify:
+  client-id: ${SPOTIFY_CLIENT_ID:your-spotify-client-id-dev}
+  client-secret: ${SPOTIFY_CLIENT_SECRET:your-spotify-client-secret-dev}
+  redirect-uri: ${SPOTIFY_REDIRECT_URI:http://localhost:8080/api/auth/spotify/callback}
+  scope: user-read-email user-read-private user-top-read playlist-read-private playlist-modify-public playlist-modify-private

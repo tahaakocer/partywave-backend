@@ -233,3 +233,12 @@ jhipster:
 # ===================================================================
 
 # application:
+
+# ===================================================================
+# Spotify OAuth2 Configuration
+# ===================================================================
+spotify:
+  client-id: ${SPOTIFY_CLIENT_ID:your-spotify-client-id}
+  client-secret: ${SPOTIFY_CLIENT_SECRET:your-spotify-client-secret}
+  redirect-uri: ${SPOTIFY_REDIRECT_URI:http://localhost:8080/api/auth/spotify/callback}
+  scope: user-read-email user-read-private user-top-read playlist-read-private playlist-modify-public playlist-modify-private
