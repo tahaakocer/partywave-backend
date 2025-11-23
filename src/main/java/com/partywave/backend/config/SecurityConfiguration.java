@@ -3,6 +3,7 @@ package com.partywave.backend.config;
 import static org.springframework.security.config.Customizer.withDefaults;
 
 import com.partywave.backend.security.*;
+import com.partywave.backend.security.jwt.JwtAuthenticationFilter;
 import com.partywave.backend.web.filter.SpaWebFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -25,9 +26,11 @@ import tech.jhipster.config.JHipsterProperties;
 public class SecurityConfiguration {
 
     private final JHipsterProperties jHipsterProperties;
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
 
-    public SecurityConfiguration(JHipsterProperties jHipsterProperties) {
+    public SecurityConfiguration(JHipsterProperties jHipsterProperties, JwtAuthenticationFilter jwtAuthenticationFilter) {
         this.jHipsterProperties = jHipsterProperties;
+        this.jwtAuthenticationFilter = jwtAuthenticationFilter;
     }
 
     @Bean
@@ -36,6 +39,7 @@ public class SecurityConfiguration {
             .cors(withDefaults())
             .csrf(csrf -> csrf.disable())
             .addFilterAfter(new SpaWebFilter(), BasicAuthenticationFilter.class)
+            .addFilterBefore(jwtAuthenticationFilter, BasicAuthenticationFilter.class)
             .headers(headers ->
                 headers
                     .contentSecurityPolicy(csp -> csp.policyDirectives(jHipsterProperties.getSecurity().getContentSecurityPolicy()))
@@ -59,6 +63,11 @@ public class SecurityConfiguration {
                     .requestMatchers(mvc.pattern("/v3/api-docs/**")).permitAll()
                     .requestMatchers(mvc.pattern(HttpMethod.POST, "/api/authenticate")).permitAll()
                     .requestMatchers(mvc.pattern(HttpMethod.GET, "/api/authenticate")).permitAll()
+                    .requestMatchers(mvc.pattern(HttpMethod.GET, "/api/auth/spotify/login")).permitAll()
+                    .requestMatchers(mvc.pattern(HttpMethod.GET, "/api/auth/spotify/callback")).permitAll()
+                    .requestMatchers(mvc.pattern(HttpMethod.POST, "/api/auth/spotify/refresh")).permitAll()
+                    .requestMatchers(mvc.pattern(HttpMethod.POST, "/api/auth/refresh")).permitAll()
+                    .requestMatchers(mvc.pattern(HttpMethod.POST, "/api/auth/logout")).permitAll()
                     .requestMatchers(mvc.pattern("/api/admin/**")).hasAuthority(AuthoritiesConstants.ADMIN)
                     .requestMatchers(mvc.pattern("/api/**")).authenticated()
                     .requestMatchers(mvc.pattern("/management/health")).permitAll()
