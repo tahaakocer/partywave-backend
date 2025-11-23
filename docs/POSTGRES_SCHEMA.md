@@ -76,7 +76,7 @@ Represents a PartyWave user linked to a Spotify account.
 * `ipAddress: String` – ip address from request
 * `last_active_at: Instant` – Last time user was active in the system.
 * `status: app_user_status` – Current status: `ONLINE`, `OFFLINE`, `BANNED`.
-* `app_user_images: List<AppUserImages>` – Logical one‑to‑many to profile images.
+* `app_user_images: List<AppUserImage>` – Logical one‑to‑many to profile images.
 * `app_user_stats: UUID` – Foreign key to `app_user_stats`.
 
 **Relationships**

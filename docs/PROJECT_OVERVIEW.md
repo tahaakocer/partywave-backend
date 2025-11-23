@@ -27,6 +27,106 @@ For detailed technical specifications, refer to:
 
 ---
 
+## 1.1 Project Package Structure
+
+PartyWave backend follows a layered architecture with clear separation of concerns. The project is organized into the following packages:
+
+### Package Organization
+
+```
+com.partywave
+├── controller/          # REST API endpoints and WebSocket handlers
+│   ├── auth/           # Authentication endpoints (Spotify OAuth, JWT)
+│   ├── room/           # Room management endpoints
+│   ├── playlist/       # Playlist operations (add, search tracks)
+│   ├── chat/           # Chat message endpoints
+│   ├── user/           # User profile endpoints
+│   └── websocket/      # WebSocket connection handlers and event emitters
+│
+├── dto/                # Data Transfer Objects (request/response models)
+│   ├── request/        # Request DTOs (input validation)
+│   ├── response/       # Response DTOs (API output)
+│   └── websocket/      # WebSocket message DTOs
+│
+├── entity/             # JPA/Hibernate entities (PostgreSQL models)
+│                       # Entities for: users, rooms, room members, chat messages, votes, etc.
+│
+├── repository/         # Data access layer (JPA repositories)
+│                       # Repository interfaces for database CRUD operations
+│
+├── service/            # Business logic layer
+│   ├── auth/           # Authentication services (OAuth, JWT)
+│   ├── room/           # Room management services
+│   ├── playlist/       # Playlist operations (Redis operations)
+│   ├── playback/       # Playback synchronization services
+│   ├── chat/           # Chat message services
+│   ├── user/           # User profile services
+│   ├── spotify/        # Spotify API integration services
+│   └── websocket/      # WebSocket event services
+│
+├── mapper/             # Entity-DTO mapping utilities
+│                       # Mappers for converting between entities and DTOs
+│
+├── config/             # Configuration classes
+│                       # Spring configuration: Security, JWT, Redis, WebSocket, Spotify, CORS
+│
+├── security/           # Security and authentication components
+│   ├── jwt/            # JWT token generation and validation
+│   ├── oauth/          # Spotify OAuth handlers
+│   └── websocket/      # WebSocket authentication
+│
+├── utils/              # Utility classes and helpers
+│                       # Utilities for: Redis keys, token encryption, timestamps, validation, exceptions
+│
+├── exception/          # Custom exception classes
+│                       # Custom exceptions for error handling (business, not found, unauthorized, validation)
+│
+└── redis/              # Redis-specific components
+    ├── service/        # Redis service layer
+    │                   # Services for: playlist operations, playback state, online members
+    └── model/          # Redis data models (if needed)
+```
+
+### Package Responsibilities
+
+- **`controller/`**: Handles HTTP requests, validates input via DTOs, delegates to services, returns responses. Also handles WebSocket connections and message routing.
+
+- **`dto/`**: Defines request/response models for API endpoints. Used for input validation and output serialization. Separate DTOs for WebSocket messages.
+
+- **`entity/`**: JPA entities representing PostgreSQL tables. Defines relationships, constraints, and database mappings.
+
+- **`repository/`**: Spring Data JPA repositories for database access. Provides CRUD operations and custom queries.
+
+- **`service/`**: Contains business logic. Coordinates between repositories (PostgreSQL) and Redis services. Handles complex workflows (e.g., room creation, track addition, vote processing).
+
+- **`mapper/`**: Converts between entities and DTOs. Uses libraries like MapStruct or manual mapping.
+
+- **`config/`**: Spring configuration classes for security, Redis, WebSocket, Spotify API client, CORS, etc.
+
+- **`security/`**: JWT token handling, OAuth flow implementation, WebSocket authentication interceptors.
+
+- **`utils/`**: Reusable utility functions (Redis key building, token encryption, timestamp conversion, validation helpers).
+
+- **`exception/`**: Custom exception classes for error handling with appropriate HTTP status codes.
+
+- **`redis/`**: Redis-specific services and models. Handles all Redis operations (playlist items, playback state, online members, like/dislike sets).
+
+### Layer Flow
+
+1. **Request Flow**: `Controller` → `DTO` (validation) → `Service` → `Repository` (PostgreSQL) / `RedisService` (Redis) → `Entity` / Redis operations
+2. **Response Flow**: `Entity` / Redis data → `Mapper` → `DTO` → `Controller` → JSON response
+3. **WebSocket Flow**: `WebSocketHandler` → `Security` (JWT validation) → `Service` → `RedisService` / `Repository` → Emit events
+
+**AI Agent Notes**:
+- **Separation of Concerns**: Controllers should be thin (validation + delegation). Business logic belongs in services.
+- **DTO Usage**: Always use DTOs for API input/output. Never expose entities directly to controllers.
+- **Redis Operations**: All playlist-related operations should go through `RedisService` classes, not directly in controllers.
+- **Transaction Management**: Use `@Transactional` on service methods that modify PostgreSQL data. Redis operations are atomic by design.
+- **Error Handling**: Use custom exceptions and handle them via `@ControllerAdvice` for consistent error responses.
+- **Security**: All controllers (except public OAuth endpoints) should require JWT authentication via Spring Security filters.
+
+---
+
 ## 2. Core Features & Workflows
 
 ### 2.1 User Authentication & Registration

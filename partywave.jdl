@@ -13,6 +13,9 @@ application {
     nativeLanguage en
     testFrameworks []
     jhiPrefix pw
+    skipUserManagement true
+    cacheProvider redis
+    enableHibernateCache true
   }
   entities *
 }
@@ -42,6 +45,7 @@ enum VoteType {
  * Represents a PartyWave user linked to a Spotify account.
  */
 entity AppUser {
+  id UUID,
   spotifyUserId String required unique,
   displayName String required,
   email String required,
@@ -58,6 +62,7 @@ entity AppUser {
  * Aggregated statistics for a user.
  */
 entity AppUserStats {
+  id UUID,
   totalLike Integer,
   totalDislike Integer
 }
@@ -66,15 +71,17 @@ entity AppUserStats {
  * Profile images associated with an AppUser.
  */
 entity AppUserImage {
+  id UUID,
   url String required,
-  height String,
-  width String
+  height Integer,
+  width Integer
 }
 
 /**
  * Stores Spotify OAuth access and refresh tokens.
  */
 entity UserToken {
+  id UUID,
   accessToken String required,
   refreshToken String required,
   tokenType String,
@@ -86,6 +93,7 @@ entity UserToken {
  * Stores PartyWave JWT refresh tokens (optional but recommended for security).
  */
 entity RefreshToken {
+  id UUID,
   tokenHash String required unique,
   expiresAt Instant required,
   createdAt Instant required,
@@ -98,16 +106,20 @@ entity RefreshToken {
  * Represents a PartyWave room.
  */
 entity Room {
+  id UUID,
   name String required,
   description String,
-  maxParticipants Integer,
-  isPublic Boolean required
+  maxParticipants Integer required,
+  isPublic Boolean required,
+  createdAt Instant,
+  updatedAt Instant
 }
 
 /**
  * Tags for categorizing rooms.
  */
 entity Tag {
+  id UUID,
   name String required unique
 }
 
@@ -115,53 +127,59 @@ entity Tag {
  * Represents a user's membership in a room.
  */
 entity RoomMember {
-  joinedAt Instant,
+  id UUID,
+  joinedAt Instant required,
   lastActiveAt Instant,
-  role RoomMemberRole
+  role RoomMemberRole required
 }
 
 /**
  * Explicit access grants for private rooms.
  */
 entity RoomAccess {
-  grantedAt Instant
+  id UUID,
+  grantedAt Instant required
 }
 
 /**
  * Invitation tokens for private rooms.
  */
 entity RoomInvitation {
+  id UUID,
   token String required unique,
-  createdAt Instant,
+  createdAt Instant required,
   expiresAt Instant,
   maxUses Integer,
-  usedCount Integer,
-  isActive Boolean
+  usedCount Integer required,
+  isActive Boolean required
 }
 
 /**
  * Chat messages sent in a room.
  */
 entity ChatMessage {
-  content String required,
-  sentAt Instant
+  id UUID,
+  content String required maxlength(1000),
+  sentAt Instant required
 }
 
 /**
  * Votes to skip tracks or kick users.
  */
 entity Vote {
-  voteType VoteType,
-  playlistItemId String // Reference to Redis UUID
+  id UUID,
+  voteType VoteType required,
+  playlistItemId String, // Reference to Redis UUID (for SKIPTRACK votes)
+  createdAt Instant required
 }
 
 // Relationships
 
 relationship OneToOne {
-  // AppUser owns the relationship (has FK to AppUserStats)
-  AppUser{appUserStats} to AppUserStats
+  // AppUserStats is owned by AppUser (AppUser has FK to AppUserStats)
+  AppUser{stats} to AppUserStats{appUser}
   // UserToken owns the relationship (has FK to AppUser)
-  UserToken{appUser(displayName)} to AppUser{userToken}
+  UserToken{appUser(displayName) required} to AppUser{userToken}
 }
 
 relationship OneToMany {

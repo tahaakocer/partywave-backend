@@ -1,9 +1,0 @@
-{
-  "partywaveApp": {
-    "VoteType": {
-      "null": "",
-      "SKIPTRACK": "SKIPTRACK",
-      "KICKUSER": "KICKUSER"
-    }
-  }
-}
