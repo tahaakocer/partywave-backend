@@ -15,6 +15,10 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * REST controller for user account information.
+ * API documentation is maintained in openapi.yml file.
+ */
 @RestController
 @RequestMapping("/api")
 public class AccountResource {

@@ -1,5 +1,6 @@
 package com.partywave.backend.repository;
 
+import com.partywave.backend.domain.Room;
 import com.partywave.backend.domain.RoomMember;
 import java.util.List;
 import java.util.Optional;
@@ -40,4 +41,12 @@ public interface RoomMemberRepository extends JpaRepository<RoomMember, UUID> {
         "select roomMember from RoomMember roomMember left join fetch roomMember.room left join fetch roomMember.appUser where roomMember.id =:id"
     )
     Optional<RoomMember> findOneWithToOneRelationships(@Param("id") UUID id);
+
+    /**
+     * Count the number of members in a room.
+     *
+     * @param room Room entity
+     * @return Number of members
+     */
+    long countByRoom(Room room);
 }
