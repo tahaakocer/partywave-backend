@@ -25,10 +25,12 @@ public class UserToken implements Serializable {
     @Column(name = "id")
     private UUID id;
 
+    @Lob
     @NotNull
     @Column(name = "access_token", nullable = false)
     private String accessToken;
 
+    @Lob
     @NotNull
     @Column(name = "refresh_token", nullable = false)
     private String refreshToken;

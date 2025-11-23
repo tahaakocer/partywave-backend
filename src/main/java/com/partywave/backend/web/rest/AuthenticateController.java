@@ -29,6 +29,7 @@ import org.springframework.web.bind.annotation.*;
 
 /**
  * Controller to authenticate users.
+ * API documentation is maintained in openapi.yml file.
  */
 @RestController
 @RequestMapping("/api")

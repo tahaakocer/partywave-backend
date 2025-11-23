@@ -52,11 +52,42 @@ public class SecurityJwtConfiguration {
 
     @Bean
     public JwtEncoder jwtEncoder() {
-        return new NimbusJwtEncoder(new ImmutableSecret<>(getSecretKey()));
+        SecretKey secretKey = getSecretKey();
+        LOG.debug("Creating JwtEncoder with algorithm: {}", JWT_ALGORITHM.getName());
+        LOG.debug("Secret key algorithm: {}", secretKey.getAlgorithm());
+        LOG.debug("Secret key length: {} bytes", secretKey.getEncoded().length);
+
+        try {
+            // Use ImmutableSecret directly - this is the simplest and most reliable approach
+            // for symmetric keys (HMAC). It automatically handles JWK creation and selection.
+            ImmutableSecret<com.nimbusds.jose.proc.SecurityContext> jwkSource = new ImmutableSecret<>(secretKey.getEncoded());
+            NimbusJwtEncoder encoder = new NimbusJwtEncoder(jwkSource);
+            LOG.debug("JwtEncoder created successfully using ImmutableSecret");
+            return encoder;
+        } catch (Exception e) {
+            LOG.error("Failed to create JwtEncoder: {}", e.getMessage(), e);
+            throw new IllegalStateException("Failed to create JwtEncoder", e);
+        }
     }
 
     private SecretKey getSecretKey() {
-        byte[] keyBytes = Base64.from(jwtKey).decode();
-        return new SecretKeySpec(keyBytes, 0, keyBytes.length, JWT_ALGORITHM.getName());
+        if (jwtKey == null || jwtKey.trim().isEmpty()) {
+            throw new IllegalStateException(
+                "JWT secret key is not configured. Please set jhipster.security.authentication.jwt.base64-secret property."
+            );
+        }
+
+        try {
+            byte[] keyBytes = Base64.from(jwtKey).decode();
+            if (keyBytes.length < 32) {
+                throw new IllegalStateException(
+                    "JWT secret key must be at least 256 bits (32 bytes) long. Current length: " + keyBytes.length * 8 + " bits."
+                );
+            }
+            return new SecretKeySpec(keyBytes, 0, keyBytes.length, JWT_ALGORITHM.getName());
+        } catch (Exception e) {
+            LOG.error("Failed to decode JWT secret key: {}", e.getMessage());
+            throw new IllegalStateException("Failed to decode JWT secret key. Please ensure it is a valid Base64-encoded string.", e);
+        }
     }
 }

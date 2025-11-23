@@ -1,10 +1,15 @@
 package com.partywave.backend.web.rest;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.partywave.backend.domain.AppUser;
+import com.partywave.backend.service.AppUserService;
+import com.partywave.backend.service.JwtAuthenticationService;
 import com.partywave.backend.service.SpotifyAuthService;
+import com.partywave.backend.service.dto.JwtRefreshRequestDTO;
+import com.partywave.backend.service.dto.JwtTokenResponseDTO;
 import com.partywave.backend.service.dto.RefreshTokenRequestDTO;
 import com.partywave.backend.service.dto.RefreshTokenResponseDTO;
-import com.partywave.backend.service.dto.SpotifyAuthResponseDTO;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.HashMap;
@@ -19,6 +24,7 @@ import org.springframework.web.bind.annotation.*;
 /**
  * REST controller for handling Spotify OAuth2 authentication.
  * Provides endpoints for initiating login and handling callback.
+ * API documentation is maintained in openapi.yml file.
  */
 @RestController
 @RequestMapping("/api/auth")
@@ -27,13 +33,21 @@ public class AuthController {
     private static final Logger LOG = LoggerFactory.getLogger(AuthController.class);
 
     private final SpotifyAuthService spotifyAuthService;
+    private final AppUserService appUserService;
+    private final JwtAuthenticationService jwtAuthenticationService;
 
     // In-memory state storage for CSRF protection
     // TODO: Replace with Redis or database storage in production
     private final Map<String, String> stateStore = new HashMap<>();
 
-    public AuthController(SpotifyAuthService spotifyAuthService) {
+    public AuthController(
+        SpotifyAuthService spotifyAuthService,
+        AppUserService appUserService,
+        JwtAuthenticationService jwtAuthenticationService
+    ) {
         this.spotifyAuthService = spotifyAuthService;
+        this.appUserService = appUserService;
+        this.jwtAuthenticationService = jwtAuthenticationService;
     }
 
     /**
@@ -68,16 +82,18 @@ public class AuthController {
      * GET /api/auth/spotify/callback : Handles Spotify OAuth2 callback
      *
      * Receives authorization code from Spotify, exchanges it for tokens,
-     * and fetches user profile information.
+     * fetches user profile, creates/updates AppUser, and generates JWT tokens.
      *
      * @param code Authorization code from Spotify
      * @param state CSRF protection state parameter
-     * @return ResponseEntity with user profile and tokens, or error status
+     * @param request HTTP request
+     * @return ResponseEntity with JWT tokens and user info
      */
     @GetMapping("/spotify/callback")
-    public ResponseEntity<SpotifyAuthResponseDTO> spotifyCallback(
+    public ResponseEntity<JwtTokenResponseDTO> spotifyCallback(
         @RequestParam("code") String code,
-        @RequestParam(value = "state", required = false) String state
+        @RequestParam(value = "state", required = false) String state,
+        HttpServletRequest request
     ) {
         LOG.debug("REST request to handle Spotify callback with code");
 
@@ -85,9 +101,7 @@ public class AuthController {
             // Validate state parameter for CSRF protection
             if (state != null && !stateStore.containsKey(state)) {
                 LOG.warn("Invalid state parameter received in callback");
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
-                    new SpotifyAuthResponseDTO("Invalid state parameter", null, null, null)
-                );
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
             }
 
             // Remove state from store after validation
@@ -95,36 +109,37 @@ public class AuthController {
                 stateStore.remove(state);
             }
 
-            // Exchange code for tokens
+            // Exchange code for Spotify tokens
             JsonNode tokenResponse = spotifyAuthService.exchangeCodeForTokens(code);
-            String accessToken = tokenResponse.get("access_token").asText();
-            String refreshToken = tokenResponse.has("refresh_token") ? tokenResponse.get("refresh_token").asText() : null;
-            int expiresIn = tokenResponse.get("expires_in").asInt();
+            String spotifyAccessToken = tokenResponse.get("access_token").asText();
+            String spotifyRefreshToken = tokenResponse.has("refresh_token") ? tokenResponse.get("refresh_token").asText() : null;
+            int spotifyExpiresIn = tokenResponse.get("expires_in").asInt();
+            String scope = tokenResponse.has("scope") ? tokenResponse.get("scope").asText() : null;
 
-            // Fetch user profile
-            JsonNode userProfile = spotifyAuthService.fetchUserProfile(accessToken);
+            // Fetch Spotify user profile
+            JsonNode userProfile = spotifyAuthService.fetchUserProfile(spotifyAccessToken);
 
-            // Build response
-            SpotifyAuthResponseDTO response = new SpotifyAuthResponseDTO(
-                null,
-                accessToken,
-                refreshToken,
-                expiresIn,
-                userProfile.get("id").asText(),
-                userProfile.has("email") ? userProfile.get("email").asText() : null,
-                userProfile.has("display_name") ? userProfile.get("display_name").asText() : null,
-                userProfile.has("images") && userProfile.get("images").size() > 0
-                    ? userProfile.get("images").get(0).get("url").asText()
-                    : null
+            // Extract client IP address
+            String ipAddress = extractIpAddress(request);
+
+            // Create or update AppUser from Spotify profile
+            AppUser appUser = appUserService.createOrUpdateFromSpotifyProfile(
+                userProfile,
+                spotifyAccessToken,
+                spotifyRefreshToken,
+                spotifyExpiresIn,
+                scope,
+                ipAddress
             );
 
-            LOG.debug("Successfully authenticated Spotify user: {}", response.getSpotifyId());
-            return ResponseEntity.ok(response);
+            // Generate PartyWave JWT tokens
+            JwtTokenResponseDTO jwtResponse = jwtAuthenticationService.generateTokens(appUser, request);
+
+            LOG.debug("Successfully authenticated user and generated JWT tokens: {}", appUser.getId());
+            return ResponseEntity.ok(jwtResponse);
         } catch (Exception e) {
             LOG.error("Error handling Spotify callback: {}", e.getMessage(), e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
-                new SpotifyAuthResponseDTO("Error during authentication: " + e.getMessage(), null, null, null)
-            );
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
 
@@ -150,5 +165,75 @@ public class AuthController {
             LOG.error("Error refreshing Spotify token: {}", e.getMessage(), e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
+    }
+
+    /**
+     * POST /api/auth/refresh : Refreshes PartyWave JWT tokens
+     *
+     * Client uses this endpoint when their JWT access token expires.
+     * Requires a valid refresh token to generate new access and refresh tokens.
+     *
+     * @param refreshRequest Request containing JWT refresh token
+     * @param request HTTP request
+     * @return ResponseEntity with new JWT tokens
+     */
+    @PostMapping("/refresh")
+    public ResponseEntity<JwtTokenResponseDTO> refreshJwtToken(
+        @Valid @RequestBody JwtRefreshRequestDTO refreshRequest,
+        HttpServletRequest request
+    ) {
+        LOG.debug("REST request to refresh JWT tokens");
+
+        try {
+            JwtTokenResponseDTO response = jwtAuthenticationService.refreshTokens(refreshRequest, request);
+            LOG.debug("Successfully refreshed JWT tokens");
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            LOG.error("Error refreshing JWT tokens: {}", e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+    }
+
+    /**
+     * POST /api/auth/logout : Logout user by revoking refresh token
+     *
+     * @param refreshRequest Request containing JWT refresh token to revoke
+     * @return ResponseEntity with no content
+     */
+    @PostMapping("/logout")
+    public ResponseEntity<Void> logout(@Valid @RequestBody JwtRefreshRequestDTO refreshRequest) {
+        LOG.debug("REST request to logout (revoke refresh token)");
+
+        try {
+            jwtAuthenticationService.revokeToken(refreshRequest.getRefreshToken());
+            LOG.debug("Successfully revoked refresh token");
+            return ResponseEntity.noContent().build();
+        } catch (Exception e) {
+            LOG.error("Error revoking refresh token: {}", e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    /**
+     * Extract client IP address from HTTP request.
+     *
+     * @param request HTTP request
+     * @return IP address
+     */
+    private String extractIpAddress(HttpServletRequest request) {
+        String ipAddress = request.getHeader("X-Forwarded-For");
+        if (ipAddress == null || ipAddress.isEmpty() || "unknown".equalsIgnoreCase(ipAddress)) {
+            ipAddress = request.getHeader("X-Real-IP");
+        }
+        if (ipAddress == null || ipAddress.isEmpty() || "unknown".equalsIgnoreCase(ipAddress)) {
+            ipAddress = request.getRemoteAddr();
+        }
+
+        // If multiple IPs (proxy chain), take the first one
+        if (ipAddress != null && ipAddress.contains(",")) {
+            ipAddress = ipAddress.split(",")[0].trim();
+        }
+
+        return ipAddress != null ? ipAddress : "unknown";
     }
 }
