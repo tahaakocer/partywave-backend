@@ -9,6 +9,7 @@ services:
     extends:
       file: ./redis.yml
       service: redis
+
 volumes:
   postgres_data:
   redis_data:
