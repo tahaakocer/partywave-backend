@@ -40,4 +40,18 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessage, UUID> 
         "select chatMessage from ChatMessage chatMessage left join fetch chatMessage.room left join fetch chatMessage.sender where chatMessage.id =:id"
     )
     Optional<ChatMessage> findOneWithToOneRelationships(@Param("id") UUID id);
+
+    /**
+     * Find chat messages for a room, ordered by sentAt descending (newest first).
+     * Used to fetch recent chat history when joining a room.
+     *
+     * @param roomId Room UUID
+     * @param pageable Pagination parameters (typically Page 0, Size N for last N messages)
+     * @return Page of chat messages
+     */
+    @Query(
+        value = "select chatMessage from ChatMessage chatMessage left join fetch chatMessage.sender where chatMessage.room.id = :roomId order by chatMessage.sentAt desc",
+        countQuery = "select count(chatMessage) from ChatMessage chatMessage where chatMessage.room.id = :roomId"
+    )
+    Page<ChatMessage> findByRoomIdOrderBySentAtDesc(@Param("roomId") UUID roomId, Pageable pageable);
 }

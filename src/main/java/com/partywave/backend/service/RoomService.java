@@ -1,21 +1,29 @@
 package com.partywave.backend.service;
 
 import com.partywave.backend.domain.AppUser;
+import com.partywave.backend.domain.ChatMessage;
 import com.partywave.backend.domain.Room;
 import com.partywave.backend.domain.RoomMember;
 import com.partywave.backend.domain.Tag;
 import com.partywave.backend.domain.enumeration.RoomMemberRole;
+import com.partywave.backend.exception.AlreadyMemberException;
+import com.partywave.backend.exception.InvalidRequestException;
+import com.partywave.backend.exception.ResourceNotFoundException;
+import com.partywave.backend.exception.RoomFullException;
+import com.partywave.backend.exception.RoomNotPublicException;
 import com.partywave.backend.repository.AppUserRepository;
+import com.partywave.backend.repository.ChatMessageRepository;
 import com.partywave.backend.repository.RoomMemberRepository;
 import com.partywave.backend.repository.RoomRepository;
 import com.partywave.backend.repository.TagRepository;
 import com.partywave.backend.repository.specification.RoomSpecifications;
-import com.partywave.backend.service.dto.CreateRoomRequestDTO;
-import com.partywave.backend.service.dto.RoomResponseDTO;
-import com.partywave.backend.service.dto.TagDTO;
+import com.partywave.backend.service.dto.*;
 import com.partywave.backend.service.mapper.RoomMapper;
 import com.partywave.backend.service.mapper.TagMapper;
+import com.partywave.backend.service.redis.LikeDislikeRedisService;
 import com.partywave.backend.service.redis.OnlineMembersRedisService;
+import com.partywave.backend.service.redis.PlaybackRedisService;
+import com.partywave.backend.service.redis.PlaylistRedisService;
 import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -23,6 +31,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -45,9 +54,13 @@ public class RoomService {
     private final RoomMemberRepository roomMemberRepository;
     private final TagRepository tagRepository;
     private final AppUserRepository appUserRepository;
+    private final ChatMessageRepository chatMessageRepository;
     private final RoomMapper roomMapper;
     private final TagMapper tagMapper;
     private final OnlineMembersRedisService onlineMembersRedisService;
+    private final PlaylistRedisService playlistRedisService;
+    private final PlaybackRedisService playbackRedisService;
+    private final LikeDislikeRedisService likeDislikeRedisService;
     private final RedisTemplate<String, Object> redisTemplate;
 
     public RoomService(
@@ -55,18 +68,26 @@ public class RoomService {
         RoomMemberRepository roomMemberRepository,
         TagRepository tagRepository,
         AppUserRepository appUserRepository,
+        ChatMessageRepository chatMessageRepository,
         RoomMapper roomMapper,
         TagMapper tagMapper,
         OnlineMembersRedisService onlineMembersRedisService,
+        PlaylistRedisService playlistRedisService,
+        PlaybackRedisService playbackRedisService,
+        LikeDislikeRedisService likeDislikeRedisService,
         RedisTemplate<String, Object> redisTemplate
     ) {
         this.roomRepository = roomRepository;
         this.roomMemberRepository = roomMemberRepository;
         this.tagRepository = tagRepository;
         this.appUserRepository = appUserRepository;
+        this.chatMessageRepository = chatMessageRepository;
         this.roomMapper = roomMapper;
         this.tagMapper = tagMapper;
         this.onlineMembersRedisService = onlineMembersRedisService;
+        this.playlistRedisService = playlistRedisService;
+        this.playbackRedisService = playbackRedisService;
+        this.likeDislikeRedisService = likeDislikeRedisService;
         this.redisTemplate = redisTemplate;
     }
 
@@ -88,29 +109,35 @@ public class RoomService {
      * @param request CreateRoomRequestDTO containing room details
      * @param creatorUserId UUID of the authenticated user creating the room
      * @return RoomResponseDTO with created room data
-     * @throws IllegalArgumentException if validation fails
-     * @throws RuntimeException if user not found
+     * @throws InvalidRequestException if validation fails
+     * @throws ResourceNotFoundException if user not found
      */
     public RoomResponseDTO createRoom(CreateRoomRequestDTO request, UUID creatorUserId) {
         log.debug("Creating room: {} by user: {}", request.getName(), creatorUserId);
 
         // Step 1: Validate input
         if (request.getName() == null || request.getName().trim().isEmpty()) {
-            throw new IllegalArgumentException("Room name must not be empty");
+            log.error("Invalid room creation request: room name is empty");
+            throw new InvalidRequestException("Room name must not be empty", "name", request.getName());
         }
 
         if (request.getMaxParticipants() == null || request.getMaxParticipants() <= 0) {
-            throw new IllegalArgumentException("Max participants must be greater than 0");
+            log.error("Invalid room creation request: max participants must be greater than 0");
+            throw new InvalidRequestException("Max participants must be greater than 0", "maxParticipants", request.getMaxParticipants());
         }
 
         // Step 2: Validate creator user ID and get creator user
         if (creatorUserId == null) {
-            throw new IllegalArgumentException("Creator user ID must not be null");
+            log.error("Invalid room creation request: creator user ID is null");
+            throw new InvalidRequestException("Creator user ID must not be null", "creatorUserId", null);
         }
 
         AppUser creator = appUserRepository
             .findById(creatorUserId)
-            .orElseThrow(() -> new RuntimeException("User not found with id: " + creatorUserId));
+            .orElseThrow(() -> {
+                log.error("User not found with id: {}", creatorUserId);
+                return new ResourceNotFoundException("User", "id", creatorUserId);
+            });
 
         // Step 3: Create Room entity
         Room room = new Room();
@@ -344,5 +371,259 @@ public class RoomService {
             .collect(Collectors.toList());
 
         return new PageImpl<>(roomDTOs, pageable, roomPage.getTotalElements());
+    }
+
+    /**
+     * Join a public room.
+     *
+     * Workflow (based on PROJECT_OVERVIEW.md section 2.3):
+     * 1. Validate room exists
+     * 2. Validate room is public (is_public = true)
+     * 3. Validate room is not full (member count < max_participants)
+     * 4. Validate user is not already a member
+     * 5. Create RoomMember entity with PARTICIPANT role
+     * 6. Add user to Redis online members set
+     * 7. Build complete room state response:
+     *    - Room details (name, description, tags, max participants)
+     *    - Complete playlist with metadata and feedback counts
+     *    - Current playback state (if a track is playing)
+     *    - Recent chat history (last 50 messages)
+     *
+     * @param roomId UUID of the room to join
+     * @param userId UUID of the authenticated user joining the room
+     * @return RoomStateResponseDTO with complete room state
+     * @throws ResourceNotFoundException if user or room not found
+     * @throws RoomNotPublicException if room is private
+     * @throws RoomFullException if room has reached maximum capacity
+     * @throws AlreadyMemberException if user is already a member
+     */
+    @Transactional
+    public RoomStateResponseDTO joinRoom(UUID roomId, UUID userId) {
+        log.debug("User {} attempting to join room {}", userId, roomId);
+
+        // Step 1: Validate room exists
+        Room room = roomRepository
+            .findOneWithEagerRelationships(roomId)
+            .orElseThrow(() -> {
+                log.error("Room not found with id: {}", roomId);
+                return new ResourceNotFoundException("Room", "id", roomId);
+            });
+
+        // Step 2: Validate room is public
+        if (Boolean.FALSE.equals(room.getIsPublic())) {
+            log.error("Attempt to join private room: {} by user: {}", roomId, userId);
+            throw new RoomNotPublicException(roomId);
+        }
+
+        // Step 3: Validate room is not full
+        long currentMemberCount = roomMemberRepository.countByRoom(room);
+        if (currentMemberCount >= room.getMaxParticipants()) {
+            log.error("Room is full: {} - Current members: {}, Max: {}", roomId, currentMemberCount, room.getMaxParticipants());
+            throw new RoomFullException((int) currentMemberCount, room.getMaxParticipants());
+        }
+
+        // Step 4: Validate user is not already a member
+        boolean isAlreadyMember = roomMemberRepository.existsByRoomIdAndUserId(roomId, userId);
+        if (isAlreadyMember) {
+            log.error("Illegal argument: [{}, {}] in joinRoom()", roomId, userId);
+            throw new AlreadyMemberException(userId, roomId);
+        }
+
+        // Step 5: Get user entity
+        AppUser user = appUserRepository
+            .findById(userId)
+            .orElseThrow(() -> {
+                log.error("User not found with id: {}", userId);
+                return new ResourceNotFoundException("User", "id", userId);
+            });
+
+        // Step 6: Create RoomMember with PARTICIPANT role
+        RoomMember roomMember = new RoomMember();
+        roomMember.setRoom(room);
+        roomMember.setAppUser(user);
+        roomMember.setRole(RoomMemberRole.PARTICIPANT);
+        Instant now = Instant.now();
+        roomMember.setJoinedAt(now);
+        roomMember.setLastActiveAt(now);
+
+        roomMemberRepository.save(roomMember);
+        log.debug("Created room member with PARTICIPANT role for user {} in room {}", userId, roomId);
+
+        // Step 7: Add user to Redis online members
+        String roomIdStr = roomId.toString();
+        String userIdStr = userId.toString();
+        onlineMembersRedisService.addOnlineMember(roomIdStr, userIdStr);
+        log.debug("Added user {} to online members for room {}", userId, roomId);
+
+        // Step 8: Build complete room state response
+        RoomStateResponseDTO response = new RoomStateResponseDTO();
+
+        // 8a. Set room details
+        RoomResponseDTO roomDto = roomMapper.toDto(room);
+        roomDto.setMemberCount((int) (currentMemberCount + 1)); // Include the user who just joined
+        long onlineCount = onlineMembersRedisService.getOnlineMemberCount(roomIdStr);
+        roomDto.setOnlineMemberCount(onlineCount);
+
+        // Convert tags to TagDTO
+        if (room.getTags() != null && !room.getTags().isEmpty()) {
+            List<TagDTO> tagDTOs = room.getTags().stream().map(tagMapper::toDto).collect(Collectors.toList());
+            roomDto.setTags(tagDTOs);
+        } else {
+            roomDto.setTags(Collections.emptyList());
+        }
+
+        response.setRoom(roomDto);
+
+        // 8b. Get complete playlist from Redis with metadata and feedback counts
+        List<PlaylistItemDTO> playlist = buildPlaylistResponse(roomIdStr);
+        response.setPlaylist(playlist);
+
+        // 8c. Get playback state from Redis (if a track is playing)
+        PlaybackStateDTO playbackState = buildPlaybackStateResponse(roomIdStr);
+        response.setPlaybackState(playbackState);
+
+        // 8d. Get recent chat history (last 50 messages)
+        List<ChatMessageDTO> chatHistory = buildChatHistoryResponse(roomId);
+        response.setChatHistory(chatHistory);
+
+        log.info("User {} successfully joined room {} - returning complete room state", userId, roomId);
+        return response;
+    }
+
+    /**
+     * Build playlist response with track metadata and feedback counts from Redis.
+     *
+     * @param roomId Room UUID as string
+     * @return List of PlaylistItemDTO
+     */
+    private List<PlaylistItemDTO> buildPlaylistResponse(String roomId) {
+        try {
+            List<Map<Object, Object>> playlistItems = playlistRedisService.getAllPlaylistItems(roomId);
+            List<PlaylistItemDTO> playlist = new ArrayList<>();
+
+            for (Map<Object, Object> item : playlistItems) {
+                PlaylistItemDTO dto = new PlaylistItemDTO();
+                dto.setId(getStringValue(item, "id"));
+                dto.setRoomId(getStringValue(item, "room_id"));
+                dto.setSpotifyTrackId(getStringValue(item, "spotify_track_id"));
+                dto.setTrackName(getStringValue(item, "track_name"));
+                dto.setTrackArtist(getStringValue(item, "track_artist"));
+                dto.setTrackAlbum(getStringValue(item, "track_album"));
+                dto.setTrackImageUrl(getStringValue(item, "track_image_url"));
+                dto.setDurationMs(getLongValue(item, "duration_ms"));
+                dto.setAddedById(getStringValue(item, "added_by_id"));
+                dto.setAddedByDisplayName(getStringValue(item, "added_by_display_name"));
+                dto.setAddedAtMs(getLongValue(item, "added_at_ms"));
+                dto.setSequenceNumber(getLongValue(item, "sequence_number"));
+                dto.setStatus(getStringValue(item, "status"));
+
+                // Get like/dislike counts from Redis
+                String playlistItemId = dto.getId();
+                long likeCount = likeDislikeRedisService.getLikeCount(roomId, playlistItemId);
+                long dislikeCount = likeDislikeRedisService.getDislikeCount(roomId, playlistItemId);
+                dto.setLikeCount(likeCount);
+                dto.setDislikeCount(dislikeCount);
+
+                playlist.add(dto);
+            }
+
+            return playlist;
+        } catch (Exception e) {
+            log.error("Failed to build playlist response for room {}", roomId, e);
+            return Collections.emptyList();
+        }
+    }
+
+    /**
+     * Build playback state response from Redis.
+     *
+     * @param roomId Room UUID as string
+     * @return PlaybackStateDTO or null if no playback state exists
+     */
+    private PlaybackStateDTO buildPlaybackStateResponse(String roomId) {
+        try {
+            Map<Object, Object> playbackData = playbackRedisService.getPlaybackState(roomId);
+            if (playbackData.isEmpty()) {
+                return null;
+            }
+
+            PlaybackStateDTO dto = new PlaybackStateDTO();
+            dto.setCurrentPlaylistItemId(getStringValue(playbackData, "current_playlist_item_id"));
+            dto.setStartedAtMs(getLongValue(playbackData, "started_at_ms"));
+            dto.setTrackDurationMs(getLongValue(playbackData, "track_duration_ms"));
+            dto.setUpdatedAtMs(getLongValue(playbackData, "updated_at_ms"));
+
+            // Calculate elapsed time
+            Long elapsedMs = playbackRedisService.getElapsedMs(roomId);
+            dto.setElapsedMs(elapsedMs);
+
+            return dto;
+        } catch (Exception e) {
+            log.error("Failed to build playback state response for room {}", roomId, e);
+            return null;
+        }
+    }
+
+    /**
+     * Build chat history response from PostgreSQL.
+     * Fetches last 50 messages ordered by sentAt descending (newest first).
+     *
+     * @param roomId Room UUID
+     * @return List of ChatMessageDTO (reversed to show oldest first)
+     */
+    private List<ChatMessageDTO> buildChatHistoryResponse(UUID roomId) {
+        try {
+            // Fetch last 50 messages (newest first)
+            PageRequest pageRequest = PageRequest.of(0, 50);
+            Page<ChatMessage> messagesPage = chatMessageRepository.findByRoomIdOrderBySentAtDesc(roomId, pageRequest);
+
+            // Convert to DTOs and reverse to show oldest first
+            List<ChatMessageDTO> chatHistory = messagesPage
+                .getContent()
+                .stream()
+                .map(message -> {
+                    ChatMessageDTO dto = new ChatMessageDTO();
+                    dto.setId(message.getId());
+                    dto.setRoomId(message.getRoom().getId());
+                    dto.setSenderId(message.getSender().getId());
+                    dto.setSenderDisplayName(message.getSender().getDisplayName());
+                    dto.setContent(message.getContent());
+                    dto.setTimestamp(message.getSentAt());
+                    return dto;
+                })
+                .collect(Collectors.toList());
+
+            // Reverse to show oldest first
+            Collections.reverse(chatHistory);
+
+            return chatHistory;
+        } catch (Exception e) {
+            log.error("Failed to build chat history response for room {}", roomId, e);
+            return Collections.emptyList();
+        }
+    }
+
+    /**
+     * Helper method to safely get string value from Redis map.
+     */
+    private String getStringValue(Map<Object, Object> map, String key) {
+        Object value = map.get(key);
+        return value != null ? value.toString() : null;
+    }
+
+    /**
+     * Helper method to safely get long value from Redis map.
+     */
+    private Long getLongValue(Map<Object, Object> map, String key) {
+        Object value = map.get(key);
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Long.parseLong(value.toString());
+        } catch (NumberFormatException e) {
+            log.warn("Failed to parse long value for key {}: {}", key, value);
+            return null;
+        }
     }
 }

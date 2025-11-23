@@ -62,20 +62,15 @@ public class AuthController {
     public ResponseEntity<Void> spotifyLogin() {
         LOG.debug("REST request to initiate Spotify login");
 
-        try {
-            // Generate random state for CSRF protection
-            String state = UUID.randomUUID().toString();
-            stateStore.put(state, state); // Store state for validation
+        // Generate random state for CSRF protection
+        String state = UUID.randomUUID().toString();
+        stateStore.put(state, state); // Store state for validation
 
-            // Get authorization URL from service
-            String authUrl = spotifyAuthService.getAuthorizationUrl(state);
+        // Get authorization URL from service
+        String authUrl = spotifyAuthService.getAuthorizationUrl(state);
 
-            LOG.debug("Redirecting to Spotify authorization URL");
-            return ResponseEntity.status(HttpStatus.FOUND).location(URI.create(authUrl)).build();
-        } catch (Exception e) {
-            LOG.error("Error initiating Spotify login: {}", e.getMessage(), e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
+        LOG.debug("Redirecting to Spotify authorization URL");
+        return ResponseEntity.status(HttpStatus.FOUND).location(URI.create(authUrl)).build();
     }
 
     /**
@@ -97,50 +92,45 @@ public class AuthController {
     ) {
         LOG.debug("REST request to handle Spotify callback with code");
 
-        try {
-            // Validate state parameter for CSRF protection
-            if (state != null && !stateStore.containsKey(state)) {
-                LOG.warn("Invalid state parameter received in callback");
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
-            }
-
-            // Remove state from store after validation
-            if (state != null) {
-                stateStore.remove(state);
-            }
-
-            // Exchange code for Spotify tokens
-            JsonNode tokenResponse = spotifyAuthService.exchangeCodeForTokens(code);
-            String spotifyAccessToken = tokenResponse.get("access_token").asText();
-            String spotifyRefreshToken = tokenResponse.has("refresh_token") ? tokenResponse.get("refresh_token").asText() : null;
-            int spotifyExpiresIn = tokenResponse.get("expires_in").asInt();
-            String scope = tokenResponse.has("scope") ? tokenResponse.get("scope").asText() : null;
-
-            // Fetch Spotify user profile
-            JsonNode userProfile = spotifyAuthService.fetchUserProfile(spotifyAccessToken);
-
-            // Extract client IP address
-            String ipAddress = extractIpAddress(request);
-
-            // Create or update AppUser from Spotify profile
-            AppUser appUser = appUserService.createOrUpdateFromSpotifyProfile(
-                userProfile,
-                spotifyAccessToken,
-                spotifyRefreshToken,
-                spotifyExpiresIn,
-                scope,
-                ipAddress
-            );
-
-            // Generate PartyWave JWT tokens
-            JwtTokenResponseDTO jwtResponse = jwtAuthenticationService.generateTokens(appUser, request);
-
-            LOG.debug("Successfully authenticated user and generated JWT tokens: {}", appUser.getId());
-            return ResponseEntity.ok(jwtResponse);
-        } catch (Exception e) {
-            LOG.error("Error handling Spotify callback: {}", e.getMessage(), e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        // Validate state parameter for CSRF protection
+        if (state != null && !stateStore.containsKey(state)) {
+            LOG.warn("Invalid state parameter received in callback");
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
         }
+
+        // Remove state from store after validation
+        if (state != null) {
+            stateStore.remove(state);
+        }
+
+        // Exchange code for Spotify tokens - exceptions will be handled by global exception handler
+        JsonNode tokenResponse = spotifyAuthService.exchangeCodeForTokens(code);
+        String spotifyAccessToken = tokenResponse.get("access_token").asText();
+        String spotifyRefreshToken = tokenResponse.has("refresh_token") ? tokenResponse.get("refresh_token").asText() : null;
+        int spotifyExpiresIn = tokenResponse.get("expires_in").asInt();
+        String scope = tokenResponse.has("scope") ? tokenResponse.get("scope").asText() : null;
+
+        // Fetch Spotify user profile
+        JsonNode userProfile = spotifyAuthService.fetchUserProfile(spotifyAccessToken);
+
+        // Extract client IP address
+        String ipAddress = extractIpAddress(request);
+
+        // Create or update AppUser from Spotify profile
+        AppUser appUser = appUserService.createOrUpdateFromSpotifyProfile(
+            userProfile,
+            spotifyAccessToken,
+            spotifyRefreshToken,
+            spotifyExpiresIn,
+            scope,
+            ipAddress
+        );
+
+        // Generate PartyWave JWT tokens
+        JwtTokenResponseDTO jwtResponse = jwtAuthenticationService.generateTokens(appUser, request);
+
+        LOG.debug("Successfully authenticated user and generated JWT tokens: {}", appUser.getId());
+        return ResponseEntity.ok(jwtResponse);
     }
 
     /**
@@ -153,18 +143,14 @@ public class AuthController {
     public ResponseEntity<RefreshTokenResponseDTO> refreshSpotifyToken(@Valid @RequestBody RefreshTokenRequestDTO refreshTokenRequest) {
         LOG.debug("REST request to refresh Spotify access token");
 
-        try {
-            JsonNode tokenResponse = spotifyAuthService.refreshAccessToken(refreshTokenRequest.getRefreshToken());
-            String accessToken = tokenResponse.get("access_token").asText();
-            int expiresIn = tokenResponse.get("expires_in").asInt();
+        // Refresh token - exceptions will be handled by global exception handler
+        JsonNode tokenResponse = spotifyAuthService.refreshAccessToken(refreshTokenRequest.getRefreshToken());
+        String accessToken = tokenResponse.get("access_token").asText();
+        int expiresIn = tokenResponse.get("expires_in").asInt();
 
-            RefreshTokenResponseDTO response = new RefreshTokenResponseDTO(accessToken, expiresIn);
-            LOG.debug("Successfully refreshed Spotify access token");
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            LOG.error("Error refreshing Spotify token: {}", e.getMessage(), e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
+        RefreshTokenResponseDTO response = new RefreshTokenResponseDTO(accessToken, expiresIn);
+        LOG.debug("Successfully refreshed Spotify access token");
+        return ResponseEntity.ok(response);
     }
 
     /**
@@ -184,14 +170,10 @@ public class AuthController {
     ) {
         LOG.debug("REST request to refresh JWT tokens");
 
-        try {
-            JwtTokenResponseDTO response = jwtAuthenticationService.refreshTokens(refreshRequest, request);
-            LOG.debug("Successfully refreshed JWT tokens");
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            LOG.error("Error refreshing JWT tokens: {}", e.getMessage(), e);
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
-        }
+        // Refresh tokens - exceptions will be handled by global exception handler
+        JwtTokenResponseDTO response = jwtAuthenticationService.refreshTokens(refreshRequest, request);
+        LOG.debug("Successfully refreshed JWT tokens");
+        return ResponseEntity.ok(response);
     }
 
     /**
@@ -204,14 +186,10 @@ public class AuthController {
     public ResponseEntity<Void> logout(@Valid @RequestBody JwtRefreshRequestDTO refreshRequest) {
         LOG.debug("REST request to logout (revoke refresh token)");
 
-        try {
-            jwtAuthenticationService.revokeToken(refreshRequest.getRefreshToken());
-            LOG.debug("Successfully revoked refresh token");
-            return ResponseEntity.noContent().build();
-        } catch (Exception e) {
-            LOG.error("Error revoking refresh token: {}", e.getMessage(), e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
+        // Revoke token - exceptions will be handled by global exception handler
+        jwtAuthenticationService.revokeToken(refreshRequest.getRefreshToken());
+        LOG.debug("Successfully revoked refresh token");
+        return ResponseEntity.noContent().build();
     }
 
     /**

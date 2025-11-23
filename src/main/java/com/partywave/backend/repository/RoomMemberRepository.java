@@ -49,4 +49,14 @@ public interface RoomMemberRepository extends JpaRepository<RoomMember, UUID> {
      * @return Number of members
      */
     long countByRoom(Room room);
+
+    /**
+     * Check if a user is already a member of a room.
+     *
+     * @param roomId Room UUID
+     * @param userId User UUID
+     * @return true if user is a member
+     */
+    @Query("select count(rm) > 0 from RoomMember rm where rm.room.id = :roomId and rm.appUser.id = :userId")
+    boolean existsByRoomIdAndUserId(@Param("roomId") UUID roomId, @Param("userId") UUID userId);
 }

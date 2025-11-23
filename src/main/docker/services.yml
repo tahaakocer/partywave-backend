@@ -9,6 +9,8 @@ services:
     extends:
       file: ./redis.yml
       service: redis
+      networks:
+        - partywave-default
 
 volumes:
   postgres_data:

@@ -1,6 +1,9 @@
 package com.partywave.backend.service;
 
 import com.partywave.backend.domain.AppUser;
+import com.partywave.backend.exception.InvalidTokenException;
+import com.partywave.backend.exception.ResourceNotFoundException;
+import com.partywave.backend.exception.TokenGenerationException;
 import com.partywave.backend.repository.AppUserRepository;
 import com.partywave.backend.security.jwt.JwtTokenProvider;
 import com.partywave.backend.service.dto.JwtRefreshRequestDTO;
@@ -38,6 +41,7 @@ public class JwtAuthenticationService {
      * @param appUser The application user
      * @param request HTTP request (for IP and user agent)
      * @return JWT token response DTO
+     * @throws TokenGenerationException if token generation fails
      */
     public JwtTokenResponseDTO generateTokens(AppUser appUser, HttpServletRequest request) {
         LOG.debug("Generating JWT tokens for user: {}", appUser.getId());
@@ -71,7 +75,7 @@ public class JwtAuthenticationService {
             return response;
         } catch (Exception e) {
             LOG.error("Failed to generate JWT tokens for user: {}", appUser.getId(), e);
-            throw new RuntimeException("Failed to generate tokens", e);
+            throw new TokenGenerationException("Failed to generate tokens", e);
         }
     }
 
@@ -81,9 +85,10 @@ public class JwtAuthenticationService {
      * @param refreshRequest Refresh token request DTO
      * @param request HTTP request (for IP and user agent)
      * @return New JWT token response DTO
-     * @throws Exception if refresh token is invalid or expired
+     * @throws InvalidTokenException if refresh token is invalid or expired
+     * @throws ResourceNotFoundException if user is not found
      */
-    public JwtTokenResponseDTO refreshTokens(JwtRefreshRequestDTO refreshRequest, HttpServletRequest request) throws Exception {
+    public JwtTokenResponseDTO refreshTokens(JwtRefreshRequestDTO refreshRequest, HttpServletRequest request) {
         LOG.debug("Refreshing JWT tokens");
 
         try {
@@ -95,8 +100,8 @@ public class JwtAuthenticationService {
             Optional<AppUser> userOpt = appUserRepository.findById(userId);
 
             if (userOpt.isEmpty()) {
-                LOG.warn("User not found for refresh token: {}", userId);
-                throw new Exception("User not found");
+                LOG.error("User not found for refresh token: {}", userId);
+                throw new ResourceNotFoundException("User", "id", userId);
             }
 
             AppUser appUser = userOpt.get();
@@ -114,9 +119,11 @@ public class JwtAuthenticationService {
 
             LOG.debug("Successfully refreshed JWT tokens for user: {}", userId);
             return response;
-        } catch (Exception e) {
-            LOG.error("Failed to refresh JWT tokens: {}", e.getMessage());
+        } catch (InvalidTokenException | ResourceNotFoundException | TokenGenerationException e) {
             throw e;
+        } catch (Exception e) {
+            LOG.error("Failed to refresh JWT tokens: {}", e.getMessage(), e);
+            throw new InvalidTokenException("Failed to refresh tokens: " + e.getMessage(), "refresh_token", e);
         }
     }
 
@@ -124,17 +131,17 @@ public class JwtAuthenticationService {
      * Revoke a refresh token (logout).
      *
      * @param refreshToken Refresh token to revoke
-     * @throws Exception if token cannot be revoked
+     * @throws InvalidTokenException if token cannot be revoked
      */
-    public void revokeToken(String refreshToken) throws Exception {
+    public void revokeToken(String refreshToken) {
         LOG.debug("Revoking refresh token");
 
         try {
             jwtTokenProvider.revokeRefreshToken(refreshToken);
             LOG.debug("Successfully revoked refresh token");
         } catch (Exception e) {
-            LOG.error("Failed to revoke refresh token: {}", e.getMessage());
-            throw e;
+            LOG.error("Failed to revoke refresh token: {}", e.getMessage(), e);
+            throw new InvalidTokenException("Failed to revoke token: " + e.getMessage(), "refresh_token", e);
         }
     }
 

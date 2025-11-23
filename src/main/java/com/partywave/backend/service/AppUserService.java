@@ -6,6 +6,7 @@ import com.partywave.backend.domain.AppUserImage;
 import com.partywave.backend.domain.AppUserStats;
 import com.partywave.backend.domain.UserToken;
 import com.partywave.backend.domain.enumeration.AppUserStatus;
+import com.partywave.backend.exception.TokenEncryptionException;
 import com.partywave.backend.repository.AppUserImageRepository;
 import com.partywave.backend.repository.AppUserRepository;
 import com.partywave.backend.repository.AppUserStatsRepository;
@@ -242,7 +243,7 @@ public class AppUserService {
             LOG.debug("Successfully updated UserToken for user: {}", appUser.getId());
         } catch (Exception e) {
             LOG.error("Failed to encrypt and save UserToken for user {}: {}", appUser.getId(), e.getMessage(), e);
-            throw new RuntimeException("Failed to save user tokens", e);
+            throw new TokenEncryptionException("Failed to save user tokens", e);
         }
     }
 

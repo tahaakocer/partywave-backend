@@ -2,6 +2,15 @@ package com.partywave.backend.web.rest.errors;
 
 import static org.springframework.core.annotation.AnnotatedElementUtils.findMergedAnnotation;
 
+import com.partywave.backend.exception.AlreadyMemberException;
+import com.partywave.backend.exception.InvalidRequestException;
+import com.partywave.backend.exception.InvalidTokenException;
+import com.partywave.backend.exception.ResourceNotFoundException;
+import com.partywave.backend.exception.RoomFullException;
+import com.partywave.backend.exception.RoomNotPublicException;
+import com.partywave.backend.exception.SpotifyApiException;
+import com.partywave.backend.exception.TokenEncryptionException;
+import com.partywave.backend.exception.TokenGenerationException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
 import java.util.Arrays;
@@ -190,10 +199,34 @@ public class ExceptionTranslator extends ResponseEntityExceptionHandler {
 
     private String getCustomizedTitle(Throwable err) {
         if (err instanceof MethodArgumentNotValidException) return "Method argument not valid";
+        if (err instanceof ResourceNotFoundException) return "Resource Not Found";
+        if (err instanceof RoomFullException) return "Room Full";
+        if (err instanceof AlreadyMemberException) return "Already a Member";
+        if (err instanceof RoomNotPublicException) return "Room Not Public";
+        if (err instanceof InvalidRequestException) return "Invalid Request";
+        if (err instanceof SpotifyApiException) return "Spotify API Error";
+        if (err instanceof TokenEncryptionException) return "Token Encryption Error";
+        if (err instanceof InvalidTokenException) return "Invalid Token";
+        if (err instanceof TokenGenerationException) return "Token Generation Error";
         return null;
     }
 
     private String getCustomizedErrorDetails(Throwable err) {
+        // For custom exceptions, always return the message
+        if (
+            err instanceof ResourceNotFoundException ||
+            err instanceof RoomFullException ||
+            err instanceof AlreadyMemberException ||
+            err instanceof RoomNotPublicException ||
+            err instanceof InvalidRequestException ||
+            err instanceof SpotifyApiException ||
+            err instanceof TokenEncryptionException ||
+            err instanceof InvalidTokenException ||
+            err instanceof TokenGenerationException
+        ) {
+            return err.getMessage();
+        }
+
         Collection<String> activeProfiles = Arrays.asList(env.getActiveProfiles());
         if (activeProfiles.contains(JHipsterConstants.SPRING_PROFILE_PRODUCTION)) {
             if (err instanceof HttpMessageConversionException) return "Unable to convert http message";
@@ -208,6 +241,16 @@ public class ExceptionTranslator extends ResponseEntityExceptionHandler {
         if (err instanceof AccessDeniedException) return HttpStatus.FORBIDDEN;
         if (err instanceof ConcurrencyFailureException) return HttpStatus.CONFLICT;
         if (err instanceof BadCredentialsException) return HttpStatus.UNAUTHORIZED;
+        // Custom PartyWave exceptions
+        if (err instanceof ResourceNotFoundException) return HttpStatus.NOT_FOUND;
+        if (err instanceof RoomFullException) return HttpStatus.BAD_REQUEST;
+        if (err instanceof AlreadyMemberException) return HttpStatus.BAD_REQUEST;
+        if (err instanceof RoomNotPublicException) return HttpStatus.FORBIDDEN;
+        if (err instanceof InvalidRequestException) return HttpStatus.BAD_REQUEST;
+        if (err instanceof SpotifyApiException) return HttpStatus.BAD_GATEWAY;
+        if (err instanceof TokenEncryptionException) return HttpStatus.INTERNAL_SERVER_ERROR;
+        if (err instanceof InvalidTokenException) return HttpStatus.UNAUTHORIZED;
+        if (err instanceof TokenGenerationException) return HttpStatus.INTERNAL_SERVER_ERROR;
         return null;
     }
 

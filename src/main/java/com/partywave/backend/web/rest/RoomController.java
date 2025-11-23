@@ -4,6 +4,7 @@ import com.partywave.backend.security.jwt.JwtTokenProvider;
 import com.partywave.backend.service.RoomService;
 import com.partywave.backend.service.dto.CreateRoomRequestDTO;
 import com.partywave.backend.service.dto.RoomResponseDTO;
+import com.partywave.backend.service.dto.RoomStateResponseDTO;
 import jakarta.validation.Valid;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -107,21 +108,13 @@ public class RoomController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
-        try {
-            // Create room via service
-            RoomResponseDTO result = roomService.createRoom(request, userId);
+        // Create room via service - exceptions will be handled by global exception handler
+        RoomResponseDTO result = roomService.createRoom(request, userId);
 
-            log.info("Room created successfully: {} (id: {}) by user: {}", result.getName(), result.getId(), userId);
+        log.info("Room created successfully: {} (id: {}) by user: {}", result.getName(), result.getId(), userId);
 
-            // Return 201 Created with Location header pointing to the new room
-            return ResponseEntity.created(new URI("/api/rooms/" + result.getId())).body(result);
-        } catch (IllegalArgumentException e) {
-            log.warn("Invalid room creation request: {}", e.getMessage());
-            return ResponseEntity.badRequest().build();
-        } catch (RuntimeException e) {
-            log.error("Failed to create room", e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
+        // Return 201 Created with Location header pointing to the new room
+        return ResponseEntity.created(new URI("/api/rooms/" + result.getId())).body(result);
     }
 
     /**
@@ -137,6 +130,55 @@ public class RoomController {
         log.debug("REST request to get Room: {}", id);
 
         return roomService.findRoomResponseById(id).map(ResponseEntity::ok).orElse(ResponseEntity.notFound().build());
+    }
+
+    /**
+     * POST /api/rooms/:roomId/join : Join a public room.
+     *
+     * Allows an authenticated user to join a public room.
+     * Validations:
+     * - Room must exist
+     * - Room must be public (is_public = true)
+     * - Room must not be full (current members < max_participants)
+     * - User must not already be a member
+     *
+     * On success:
+     * - Creates RoomMember record with PARTICIPANT role
+     * - Adds user to Redis online members set
+     * - Returns complete room state including:
+     *   - Room details (name, description, tags, max participants)
+     *   - Complete playlist with track metadata and feedback counts
+     *   - Current playback state (if a track is playing)
+     *   - Recent chat history (last 50 messages)
+     *
+     * Based on PROJECT_OVERVIEW.md section 2.3 - Room Joining.
+     *
+     * @param roomId UUID of the room to join
+     * @return ResponseEntity with status 200 (OK) and RoomStateResponseDTO body, or:
+     *         - 400 (Bad Request) if validation fails
+     *         - 401 (Unauthorized) if not authenticated
+     *         - 403 (Forbidden) if room is private
+     *         - 404 (Not Found) if room doesn't exist
+     */
+    @PostMapping("/{roomId}/join")
+    public ResponseEntity<RoomStateResponseDTO> joinRoom(@PathVariable UUID roomId) {
+        log.debug("REST request to join room: {}", roomId);
+
+        // Extract authenticated user ID from JWT token
+        UUID userId = extractUserIdFromAuthentication();
+
+        if (userId == null) {
+            log.warn("Unauthorized room join attempt - no valid JWT token");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
+        // Join room via service - exceptions will be handled by global exception handler
+        RoomStateResponseDTO result = roomService.joinRoom(roomId, userId);
+
+        log.info("User {} successfully joined room {}", userId, roomId);
+
+        // Return 200 OK with complete room state
+        return ResponseEntity.ok(result);
     }
 
     /**

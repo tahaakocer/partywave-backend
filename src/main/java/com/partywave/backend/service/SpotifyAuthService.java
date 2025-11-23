@@ -2,6 +2,7 @@ package com.partywave.backend.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.partywave.backend.exception.SpotifyApiException;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import org.slf4j.Logger;
@@ -76,9 +77,9 @@ public class SpotifyAuthService {
      *
      * @param code Authorization code received from Spotify callback
      * @return JsonNode containing access_token, refresh_token, expires_in, etc.
-     * @throws Exception if token exchange fails
+     * @throws SpotifyApiException if token exchange fails
      */
-    public JsonNode exchangeCodeForTokens(String code) throws Exception {
+    public JsonNode exchangeCodeForTokens(String code) {
         LOG.debug("Exchanging authorization code for tokens");
 
         // Prepare headers with Basic authentication
@@ -103,11 +104,13 @@ public class SpotifyAuthService {
                 return tokenResponse;
             } else {
                 LOG.error("Failed to exchange code for tokens. Status: {}", response.getStatusCode());
-                throw new Exception("Failed to exchange authorization code for tokens");
+                throw new SpotifyApiException("Failed to exchange authorization code for tokens", "token_exchange");
             }
+        } catch (SpotifyApiException e) {
+            throw e;
         } catch (Exception e) {
             LOG.error("Error exchanging code for tokens: {}", e.getMessage(), e);
-            throw new Exception("Error during token exchange: " + e.getMessage(), e);
+            throw new SpotifyApiException("Error during token exchange: " + e.getMessage(), "token_exchange", e);
         }
     }
 
@@ -116,9 +119,9 @@ public class SpotifyAuthService {
      *
      * @param accessToken Spotify access token
      * @return JsonNode containing user profile data (id, email, display_name, etc.)
-     * @throws Exception if profile fetch fails
+     * @throws SpotifyApiException if profile fetch fails
      */
-    public JsonNode fetchUserProfile(String accessToken) throws Exception {
+    public JsonNode fetchUserProfile(String accessToken) {
         LOG.debug("Fetching user profile from Spotify");
 
         HttpHeaders headers = new HttpHeaders();
@@ -136,11 +139,13 @@ public class SpotifyAuthService {
                 return userProfile;
             } else {
                 LOG.error("Failed to fetch user profile. Status: {}", response.getStatusCode());
-                throw new Exception("Failed to fetch user profile from Spotify");
+                throw new SpotifyApiException("Failed to fetch user profile from Spotify", "user_profile_fetch");
             }
+        } catch (SpotifyApiException e) {
+            throw e;
         } catch (Exception e) {
             LOG.error("Error fetching user profile: {}", e.getMessage(), e);
-            throw new Exception("Error fetching user profile: " + e.getMessage(), e);
+            throw new SpotifyApiException("Error fetching user profile: " + e.getMessage(), "user_profile_fetch", e);
         }
     }
 
@@ -149,9 +154,9 @@ public class SpotifyAuthService {
      *
      * @param refreshToken Spotify refresh token
      * @return JsonNode containing new access_token and expires_in
-     * @throws Exception if token refresh fails
+     * @throws SpotifyApiException if token refresh fails
      */
-    public JsonNode refreshAccessToken(String refreshToken) throws Exception {
+    public JsonNode refreshAccessToken(String refreshToken) {
         LOG.debug("Refreshing access token");
 
         HttpHeaders headers = new HttpHeaders();
@@ -173,11 +178,13 @@ public class SpotifyAuthService {
                 return tokenResponse;
             } else {
                 LOG.error("Failed to refresh access token. Status: {}", response.getStatusCode());
-                throw new Exception("Failed to refresh access token");
+                throw new SpotifyApiException("Failed to refresh access token", "token_refresh");
             }
+        } catch (SpotifyApiException e) {
+            throw e;
         } catch (Exception e) {
             LOG.error("Error refreshing access token: {}", e.getMessage(), e);
-            throw new Exception("Error refreshing access token: " + e.getMessage(), e);
+            throw new SpotifyApiException("Error refreshing access token: " + e.getMessage(), "token_refresh", e);
         }
     }
 
