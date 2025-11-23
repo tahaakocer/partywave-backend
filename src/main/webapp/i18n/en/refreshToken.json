@@ -1,0 +1,30 @@
+{
+  "partywaveApp": {
+    "refreshToken": {
+      "home": {
+        "title": "Refresh Tokens",
+        "refreshListLabel": "Refresh list",
+        "createLabel": "Create a new Refresh Token",
+        "createOrEditLabel": "Create or edit a Refresh Token",
+        "notFound": "No Refresh Tokens found"
+      },
+      "created": "A new Refresh Token is created with identifier {{ param }}",
+      "updated": "A Refresh Token is updated with identifier {{ param }}",
+      "deleted": "A Refresh Token is deleted with identifier {{ param }}",
+      "delete": {
+        "question": "Are you sure you want to delete Refresh Token {{ id }}?"
+      },
+      "detail": {
+        "title": "Refresh Token"
+      },
+      "id": "Id",
+      "tokenHash": "Token Hash",
+      "expiresAt": "Expires At",
+      "createdAt": "Created At",
+      "revokedAt": "Revoked At",
+      "deviceInfo": "Device Info",
+      "ipAddress": "Ip Address",
+      "appUser": "App User"
+    }
+  }
+}

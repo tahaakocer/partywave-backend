@@ -1,0 +1,40 @@
+{
+  "annotations": {
+    "changelogDate": "20251123170640"
+  },
+  "applications": ["partywave"],
+  "documentation": "Profile images associated with an AppUser.",
+  "dto": "mapstruct",
+  "fields": [
+    {
+      "fieldName": "id",
+      "fieldType": "UUID"
+    },
+    {
+      "fieldName": "url",
+      "fieldType": "String",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "height",
+      "fieldType": "Integer"
+    },
+    {
+      "fieldName": "width",
+      "fieldType": "Integer"
+    }
+  ],
+  "name": "AppUserImage",
+  "relationships": [
+    {
+      "otherEntityField": "displayName",
+      "otherEntityName": "appUser",
+      "otherEntityRelationshipName": "images",
+      "relationshipName": "appUser",
+      "relationshipSide": "right",
+      "relationshipType": "many-to-one"
+    }
+  ],
+  "searchEngine": "no",
+  "service": "serviceClass"
+}

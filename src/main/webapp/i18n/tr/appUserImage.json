@@ -1,0 +1,27 @@
+{
+  "partywaveApp": {
+    "appUserImage": {
+      "home": {
+        "title": "App User Images",
+        "refreshListLabel": "Listeyi yenile",
+        "createLabel": "Yeni App User Image ekle",
+        "createOrEditLabel": "Yeni App User Image ekle veya guncelle",
+        "notFound": "App User Images kaydi bulunamadi"
+      },
+      "created": "{{ param }} ID ile bir App User Image eklendi",
+      "updated": "{{ param }} nolu App User Image guncellendi",
+      "deleted": "{{ param }} nolu App User Image silindi",
+      "delete": {
+        "question": "{{ id }} nolu App User Image silinecek. Devem etmek istiyor musunuz?"
+      },
+      "detail": {
+        "title": "App User Image"
+      },
+      "id": "Id",
+      "url": "Url",
+      "height": "Height",
+      "width": "Width",
+      "appUser": "App User"
+    }
+  }
+}

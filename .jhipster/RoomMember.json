@@ -1,0 +1,51 @@
+{
+  "annotations": {
+    "changelogDate": "20251123171140"
+  },
+  "applications": ["partywave"],
+  "documentation": "Represents a user's membership in a room.",
+  "dto": "mapstruct",
+  "fields": [
+    {
+      "fieldName": "id",
+      "fieldType": "UUID"
+    },
+    {
+      "fieldName": "joinedAt",
+      "fieldType": "Instant",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "lastActiveAt",
+      "fieldType": "Instant"
+    },
+    {
+      "fieldName": "role",
+      "fieldType": "RoomMemberRole",
+      "fieldValidateRules": ["required"],
+      "fieldValues": "OWNER,DJ,MODERATOR,PARTICIPANT"
+    }
+  ],
+  "name": "RoomMember",
+  "pagination": "pagination",
+  "relationships": [
+    {
+      "otherEntityField": "name",
+      "otherEntityName": "room",
+      "otherEntityRelationshipName": "members",
+      "relationshipName": "room",
+      "relationshipSide": "right",
+      "relationshipType": "many-to-one"
+    },
+    {
+      "otherEntityField": "displayName",
+      "otherEntityName": "appUser",
+      "otherEntityRelationshipName": "memberships",
+      "relationshipName": "appUser",
+      "relationshipSide": "right",
+      "relationshipType": "many-to-one"
+    }
+  ],
+  "searchEngine": "no",
+  "service": "serviceClass"
+}

@@ -1,0 +1,4 @@
+org.springframework.test.context.ContextCustomizerFactory = \
+    com.partywave.backend.config.\
+    SqlTestContainersSpringContextCustomizerFactory,com.partywave.backend.\
+    config.RedisTestContainersSpringContextCustomizerFactory

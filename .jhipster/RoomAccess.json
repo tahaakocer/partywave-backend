@@ -1,0 +1,48 @@
+{
+  "annotations": {
+    "changelogDate": "20251123171240"
+  },
+  "applications": ["partywave"],
+  "documentation": "Explicit access grants for private rooms.",
+  "dto": "mapstruct",
+  "fields": [
+    {
+      "fieldName": "id",
+      "fieldType": "UUID"
+    },
+    {
+      "fieldName": "grantedAt",
+      "fieldType": "Instant",
+      "fieldValidateRules": ["required"]
+    }
+  ],
+  "name": "RoomAccess",
+  "relationships": [
+    {
+      "otherEntityField": "name",
+      "otherEntityName": "room",
+      "otherEntityRelationshipName": "accesses",
+      "relationshipName": "room",
+      "relationshipSide": "right",
+      "relationshipType": "many-to-one"
+    },
+    {
+      "otherEntityField": "displayName",
+      "otherEntityName": "appUser",
+      "otherEntityRelationshipName": "receivedAccesses",
+      "relationshipName": "appUser",
+      "relationshipSide": "right",
+      "relationshipType": "many-to-one"
+    },
+    {
+      "otherEntityField": "displayName",
+      "otherEntityName": "appUser",
+      "otherEntityRelationshipName": "grantedAccesses",
+      "relationshipName": "grantedBy",
+      "relationshipSide": "right",
+      "relationshipType": "many-to-one"
+    }
+  ],
+  "searchEngine": "no",
+  "service": "serviceClass"
+}

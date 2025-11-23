@@ -1,0 +1,36 @@
+{
+  "generator-jhipster": {
+    "applicationType": "monolith",
+    "authenticationType": "jwt",
+    "baseName": "partywave",
+    "buildTool": "maven",
+    "cacheProvider": "redis",
+    "clientFramework": "react",
+    "devDatabaseType": "postgresql",
+    "enableHibernateCache": true,
+    "entities": [
+      "AppUser",
+      "AppUserStats",
+      "AppUserImage",
+      "UserToken",
+      "RefreshToken",
+      "Room",
+      "Tag",
+      "RoomMember",
+      "RoomAccess",
+      "RoomInvitation",
+      "ChatMessage",
+      "Vote"
+    ],
+    "jhiPrefix": "pw",
+    "jhipsterVersion": "8.11.0",
+    "jwtSecretKey": "YmI1ZjQwZDAzOWRlMDEwYzFhZjQwNDdjZDZlMjQ2OTA5YTdiZDlkM2EzY2VjZTdhN2VkOGM0MzVjYmIxYjQ2NWE1YjYzNTFlOWRlZTAxNGFiYmUzOTlhNmNjMjQ3YWVmMjkzYTdkODk1Y2VlOWZmODg4MWNkNWJkMzE4NDU5NDA=",
+    "languages": ["en", "tr"],
+    "lastLiquibaseTimestamp": 1763918140000,
+    "nativeLanguage": "en",
+    "packageName": "com.partywave.backend",
+    "prodDatabaseType": "postgresql",
+    "skipUserManagement": true,
+    "testFrameworks": []
+  }
+}

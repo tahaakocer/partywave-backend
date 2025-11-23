@@ -1,0 +1,10 @@
+{
+  "partywaveApp": {
+    "AppUserStatus": {
+      "null": "",
+      "ONLINE": "ONLINE",
+      "OFFLINE": "OFFLINE",
+      "BANNED": "BANNED"
+    }
+  }
+}

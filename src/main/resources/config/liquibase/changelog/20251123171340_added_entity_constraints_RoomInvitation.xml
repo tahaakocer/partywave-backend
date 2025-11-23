@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:ext="http://www.liquibase.org/xml/ns/dbchangelog-ext"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd
+                        http://www.liquibase.org/xml/ns/dbchangelog-ext http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-ext.xsd">
+    <!--
+        Added the constraints for entity RoomInvitation.
+    -->
+    <changeSet id="20251123171340-2" author="jhipster">
+
+        <addForeignKeyConstraint baseColumnNames="room_id"
+                                 baseTableName="room_invitation"
+                                 constraintName="fk_room_invitation__room_id"
+                                 referencedColumnNames="id"
+                                 referencedTableName="room"
+                                 />
+
+        <addForeignKeyConstraint baseColumnNames="created_by_id"
+                                 baseTableName="room_invitation"
+                                 constraintName="fk_room_invitation__created_by_id"
+                                 referencedColumnNames="id"
+                                 referencedTableName="app_user"
+                                 />
+    </changeSet>
+</databaseChangeLog>

@@ -1,0 +1,30 @@
+{
+  "partywaveApp": {
+    "refreshToken": {
+      "home": {
+        "title": "Refresh Tokens",
+        "refreshListLabel": "Listeyi yenile",
+        "createLabel": "Yeni Refresh Token ekle",
+        "createOrEditLabel": "Yeni Refresh Token ekle veya guncelle",
+        "notFound": "Refresh Tokens kaydi bulunamadi"
+      },
+      "created": "{{ param }} ID ile bir Refresh Token eklendi",
+      "updated": "{{ param }} nolu Refresh Token guncellendi",
+      "deleted": "{{ param }} nolu Refresh Token silindi",
+      "delete": {
+        "question": "{{ id }} nolu Refresh Token silinecek. Devem etmek istiyor musunuz?"
+      },
+      "detail": {
+        "title": "Refresh Token"
+      },
+      "id": "Id",
+      "tokenHash": "Token Hash",
+      "expiresAt": "Expires At",
+      "createdAt": "Created At",
+      "revokedAt": "Revoked At",
+      "deviceInfo": "Device Info",
+      "ipAddress": "Ip Address",
+      "appUser": "App User"
+    }
+  }
+}

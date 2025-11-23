@@ -1,0 +1,34 @@
+{
+  "annotations": {
+    "changelogDate": "20251123170540"
+  },
+  "applications": ["partywave"],
+  "documentation": "Aggregated statistics for a user.",
+  "dto": "mapstruct",
+  "fields": [
+    {
+      "fieldName": "id",
+      "fieldType": "UUID"
+    },
+    {
+      "fieldName": "totalLike",
+      "fieldType": "Integer"
+    },
+    {
+      "fieldName": "totalDislike",
+      "fieldType": "Integer"
+    }
+  ],
+  "name": "AppUserStats",
+  "relationships": [
+    {
+      "otherEntityName": "appUser",
+      "otherEntityRelationshipName": "stats",
+      "relationshipName": "appUser",
+      "relationshipSide": "right",
+      "relationshipType": "one-to-one"
+    }
+  ],
+  "searchEngine": "no",
+  "service": "serviceClass"
+}

@@ -1,0 +1,54 @@
+{
+  "annotations": {
+    "changelogDate": "20251123170840"
+  },
+  "applications": ["partywave"],
+  "documentation": "Stores PartyWave JWT refresh tokens (optional but recommended for security).",
+  "dto": "mapstruct",
+  "fields": [
+    {
+      "fieldName": "id",
+      "fieldType": "UUID"
+    },
+    {
+      "fieldName": "tokenHash",
+      "fieldType": "String",
+      "fieldValidateRules": ["required", "unique"]
+    },
+    {
+      "fieldName": "expiresAt",
+      "fieldType": "Instant",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "createdAt",
+      "fieldType": "Instant",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "revokedAt",
+      "fieldType": "Instant"
+    },
+    {
+      "fieldName": "deviceInfo",
+      "fieldType": "String"
+    },
+    {
+      "fieldName": "ipAddress",
+      "fieldType": "String"
+    }
+  ],
+  "name": "RefreshToken",
+  "relationships": [
+    {
+      "otherEntityField": "displayName",
+      "otherEntityName": "appUser",
+      "otherEntityRelationshipName": "refreshTokens",
+      "relationshipName": "appUser",
+      "relationshipSide": "right",
+      "relationshipType": "many-to-one"
+    }
+  ],
+  "searchEngine": "no",
+  "service": "serviceClass"
+}

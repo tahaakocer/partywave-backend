@@ -1,0 +1,50 @@
+{
+  "annotations": {
+    "changelogDate": "20251123170740"
+  },
+  "applications": ["partywave"],
+  "documentation": "Stores Spotify OAuth access and refresh tokens.",
+  "dto": "mapstruct",
+  "fields": [
+    {
+      "fieldName": "id",
+      "fieldType": "UUID"
+    },
+    {
+      "fieldName": "accessToken",
+      "fieldType": "String",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "refreshToken",
+      "fieldType": "String",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "tokenType",
+      "fieldType": "String"
+    },
+    {
+      "fieldName": "expiresAt",
+      "fieldType": "Instant"
+    },
+    {
+      "fieldName": "scope",
+      "fieldType": "String"
+    }
+  ],
+  "name": "UserToken",
+  "relationships": [
+    {
+      "otherEntityField": "displayName",
+      "otherEntityName": "appUser",
+      "otherEntityRelationshipName": "userToken",
+      "relationshipName": "appUser",
+      "relationshipSide": "left",
+      "relationshipType": "one-to-one",
+      "relationshipValidateRules": "required"
+    }
+  ],
+  "searchEngine": "no",
+  "service": "serviceClass"
+}

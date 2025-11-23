@@ -1,0 +1,59 @@
+{
+  "annotations": {
+    "changelogDate": "20251123171540"
+  },
+  "applications": ["partywave"],
+  "documentation": "Votes to skip tracks or kick users.",
+  "dto": "mapstruct",
+  "fields": [
+    {
+      "fieldName": "id",
+      "fieldType": "UUID"
+    },
+    {
+      "fieldName": "voteType",
+      "fieldType": "VoteType",
+      "fieldValidateRules": ["required"],
+      "fieldValues": "SKIPTRACK,KICKUSER"
+    },
+    {
+      "fieldName": "playlistItemId",
+      "fieldType": "String"
+    },
+    {
+      "fieldName": "createdAt",
+      "fieldType": "Instant",
+      "fieldValidateRules": ["required"]
+    }
+  ],
+  "name": "Vote",
+  "pagination": "pagination",
+  "relationships": [
+    {
+      "otherEntityField": "name",
+      "otherEntityName": "room",
+      "otherEntityRelationshipName": "votes",
+      "relationshipName": "room",
+      "relationshipSide": "right",
+      "relationshipType": "many-to-one"
+    },
+    {
+      "otherEntityField": "displayName",
+      "otherEntityName": "appUser",
+      "otherEntityRelationshipName": "castVotes",
+      "relationshipName": "voter",
+      "relationshipSide": "right",
+      "relationshipType": "many-to-one"
+    },
+    {
+      "otherEntityField": "displayName",
+      "otherEntityName": "appUser",
+      "otherEntityRelationshipName": "receivedVotes",
+      "relationshipName": "targetUser",
+      "relationshipSide": "right",
+      "relationshipType": "many-to-one"
+    }
+  ],
+  "searchEngine": "no",
+  "service": "serviceClass"
+}

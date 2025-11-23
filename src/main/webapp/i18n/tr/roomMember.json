@@ -1,0 +1,28 @@
+{
+  "partywaveApp": {
+    "roomMember": {
+      "home": {
+        "title": "Room Members",
+        "refreshListLabel": "Listeyi yenile",
+        "createLabel": "Yeni Room Member ekle",
+        "createOrEditLabel": "Yeni Room Member ekle veya guncelle",
+        "notFound": "Room Members kaydi bulunamadi"
+      },
+      "created": "{{ param }} ID ile bir Room Member eklendi",
+      "updated": "{{ param }} nolu Room Member guncellendi",
+      "deleted": "{{ param }} nolu Room Member silindi",
+      "delete": {
+        "question": "{{ id }} nolu Room Member silinecek. Devem etmek istiyor musunuz?"
+      },
+      "detail": {
+        "title": "Room Member"
+      },
+      "id": "Id",
+      "joinedAt": "Joined At",
+      "lastActiveAt": "Last Active At",
+      "role": "Role",
+      "room": "Room",
+      "appUser": "App User"
+    }
+  }
+}

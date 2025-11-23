@@ -1,0 +1,27 @@
+{
+  "partywaveApp": {
+    "roomAccess": {
+      "home": {
+        "title": "Room Accesses",
+        "refreshListLabel": "Listeyi yenile",
+        "createLabel": "Yeni Room Access ekle",
+        "createOrEditLabel": "Yeni Room Access ekle veya guncelle",
+        "notFound": "Room Accesses kaydi bulunamadi"
+      },
+      "created": "{{ param }} ID ile bir Room Access eklendi",
+      "updated": "{{ param }} nolu Room Access guncellendi",
+      "deleted": "{{ param }} nolu Room Access silindi",
+      "delete": {
+        "question": "{{ id }} nolu Room Access silinecek. Devem etmek istiyor musunuz?"
+      },
+      "detail": {
+        "title": "Room Access"
+      },
+      "id": "Id",
+      "grantedAt": "Granted At",
+      "room": "Room",
+      "appUser": "App User",
+      "grantedBy": "Granted By"
+    }
+  }
+}
