@@ -14,10 +14,10 @@
             <column name="id" type="${uuidType}">
                 <constraints primaryKey="true" nullable="false"/>
             </column>
-            <column name="access_token" type="varchar(255)">
+            <column name="access_token" type="text">
                 <constraints nullable="false" />
             </column>
-            <column name="refresh_token" type="varchar(255)">
+            <column name="refresh_token" type="text">
                 <constraints nullable="false" />
             </column>
             <column name="token_type" type="varchar(255)">
