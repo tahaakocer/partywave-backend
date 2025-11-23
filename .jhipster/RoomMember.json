@@ -24,6 +24,11 @@
       "fieldType": "RoomMemberRole",
       "fieldValidateRules": ["required"],
       "fieldValues": "OWNER,DJ,MODERATOR,PARTICIPANT"
+    },
+    {
+      "fieldName": "isActive",
+      "fieldType": "Boolean",
+      "fieldValidateRules": ["required"]
     }
   ],
   "name": "RoomMember",

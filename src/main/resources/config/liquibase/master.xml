@@ -36,5 +36,6 @@
     <include file="config/liquibase/changelog/20251123171440_added_entity_constraints_ChatMessage.xml" relativeToChangelogFile="false"/>
     <include file="config/liquibase/changelog/20251123171540_added_entity_constraints_Vote.xml" relativeToChangelogFile="false"/>
     <!-- jhipster-needle-liquibase-add-constraints-changelog - JHipster will add liquibase constraints changelogs here -->
+    <include file="config/liquibase/changelog/20251123171640_add_is_active_to_room_member.xml" relativeToChangelogFile="false"/>
     <!-- jhipster-needle-liquibase-add-incremental-changelog - JHipster will add incremental liquibase changelogs here -->
 </databaseChangeLog>

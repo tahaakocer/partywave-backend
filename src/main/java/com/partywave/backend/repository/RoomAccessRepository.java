@@ -42,4 +42,14 @@ public interface RoomAccessRepository extends JpaRepository<RoomAccess, UUID> {
         "select roomAccess from RoomAccess roomAccess left join fetch roomAccess.room left join fetch roomAccess.appUser left join fetch roomAccess.grantedBy where roomAccess.id =:id"
     )
     Optional<RoomAccess> findOneWithToOneRelationships(@Param("id") UUID id);
+
+    /**
+     * Check if a user has explicit access to a room.
+     *
+     * @param roomId Room UUID
+     * @param userId User UUID
+     * @return true if user has explicit access
+     */
+    @Query("select count(ra) > 0 from RoomAccess ra where ra.room.id = :roomId and ra.appUser.id = :userId")
+    boolean existsByRoomIdAndAppUserId(@Param("roomId") UUID roomId, @Param("userId") UUID userId);
 }

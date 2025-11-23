@@ -38,6 +38,10 @@ public class RoomMember implements Serializable {
     @Column(name = "role", nullable = false)
     private RoomMemberRole role;
 
+    @NotNull
+    @Column(name = "is_active", nullable = false)
+    private Boolean isActive = true;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JsonIgnoreProperties(value = { "members", "accesses", "invitations", "messages", "votes", "tags" }, allowSetters = true)
     private Room room;
@@ -115,6 +119,19 @@ public class RoomMember implements Serializable {
         this.role = role;
     }
 
+    public Boolean getIsActive() {
+        return this.isActive;
+    }
+
+    public RoomMember isActive(Boolean isActive) {
+        this.setIsActive(isActive);
+        return this;
+    }
+
+    public void setIsActive(Boolean isActive) {
+        this.isActive = isActive;
+    }
+
     public Room getRoom() {
         return this.room;
     }
@@ -168,6 +185,7 @@ public class RoomMember implements Serializable {
             ", joinedAt='" + getJoinedAt() + "'" +
             ", lastActiveAt='" + getLastActiveAt() + "'" +
             ", role='" + getRole() + "'" +
+            ", isActive='" + getIsActive() + "'" +
             "}";
     }
 }

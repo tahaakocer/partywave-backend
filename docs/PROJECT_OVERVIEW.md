@@ -15,11 +15,13 @@ PartyWave uses a **dual-storage architecture**:
 - **Spotify Web SDK**: Client-side music playback synchronization
 - **WebSocket**: Real-time communication for chat, playback events, and room state updates
 
-**Important**: 
+**Important**:
+
 - Playlist items, track metadata, and like/dislike statistics are stored **only in Redis** and are cleaned up when rooms close.
 - **Tracks are never removed from the playlist list**: When a track finishes (`PLAYED`) or is skipped (`SKIPPED`), only its `status` field is updated. The track remains in the playlist list for history. Filter by `status` to get active tracks (`QUEUED`/`PLAYING`) or history (`PLAYED`/`SKIPPED`).
 
 For detailed technical specifications, refer to:
+
 - `POSTGRES_SCHEMA.md` – Database schema and relationships
 - `REDIS_ARCHITECTURE.md` – Redis data structures and patterns
 - `SPOTIFY_*.md` – Spotify API integration endpoints
@@ -118,6 +120,7 @@ com.partywave
 3. **WebSocket Flow**: `WebSocketHandler` → `Security` (JWT validation) → `Service` → `RedisService` / `Repository` → Emit events
 
 **AI Agent Notes**:
+
 - **Separation of Concerns**: Controllers should be thin (validation + delegation). Business logic belongs in services.
 - **DTO Usage**: Always use DTOs for API input/output. Never expose entities directly to controllers.
 - **Redis Operations**: All playlist-related operations should go through `RedisService` classes, not directly in controllers.
@@ -167,12 +170,14 @@ com.partywave
 11. Backend returns user data and JWT tokens to frontend (via redirect to frontend with token, or API response, or httpOnly cookies).
 
 **Database Impact**:
+
 - `app_user` table: INSERT (new users) or UPDATE (existing users)
 - `app_user_images` table: INSERT (for new users)
 - `app_user_stats` table: INSERT (for new users)
 - `user_tokens` table: INSERT or UPDATE (for all users, new or existing)
 
 **AI Agent Notes**:
+
 - **Backend handles OAuth flow**: Frontend should NOT directly redirect to Spotify. Instead, frontend calls backend API (e.g., `/auth/spotify/login`), and backend constructs and redirects to Spotify authorization URL. This keeps `client_secret` secure on backend.
 - **Callback endpoint**: Spotify redirects to backend callback endpoint (e.g., `/auth/spotify/callback`) with authorization code. Backend validates `state` parameter for CSRF protection.
 - Use Spotify User API endpoints (see `SPOTIFY_AUTH_ENDPOINTS.md`).
@@ -213,16 +218,17 @@ com.partywave
    - Create empty online members set: `partywave:room:{roomId}:members:online` (SET)
    - Add creator to online members: `SADD partywave:room:{roomId}:members:online {userId}`
 
-**Note**: No playlist items or tracks are created in PostgreSQL. All playlist data is stored in Redis only.
-5. Backend returns room data to frontend.
+**Note**: No playlist items or tracks are created in PostgreSQL. All playlist data is stored in Redis only. 5. Backend returns room data to frontend.
 
 **Database Impact**:
+
 - `room` table: INSERT
 - `room_member` table: INSERT
 - `tag` table: INSERT (if tag doesn't exist)
 - `room_tag` table: INSERT (for each tag)
 
 **AI Agent Notes**:
+
 - Room creator automatically becomes `OWNER` with full permissions.
 - For private rooms (`is_public = false`), access is controlled via:
   - `room_access` table: Explicit access grants (room owner can grant access to specific users).
@@ -268,17 +274,20 @@ com.partywave
        - `expires_at IS NULL OR expires_at > NOW()`
        - `max_uses IS NULL OR used_count < max_uses`
        - Extract `room_id` from invitation record
-   - Room is not full: `COUNT(room_member WHERE room_id = X) < room.max_participants`
-   - User is not already a member (check `room_member` table).
+   - Room is not full: `COUNT(room_member WHERE room_id = X AND is_active = true) < room.max_participants`
+   - User is not already an active member (check `room_member` table WHERE `is_active = true`).
 6. **If joining via invitation token**:
-   - Increment `room_invitation.used_count` (UPDATE `room_invitation SET used_count = used_count + 1 WHERE id = X`).
+   - Increment `room_invitation.used_count` atomically (UPDATE `room_invitation SET used_count = used_count + 1 WHERE id = X`).
    - Optionally create `room_access` record for audit trail (see section 2.4.1).
-7. Backend creates `room_member` record:
-   - `room_id` = target room ID
-   - `app_user_id` = user ID
-   - `role` = `PARTICIPANT` (default role)
-   - `joined_at` = current timestamp
-   - `last_active_at` = current timestamp
+7. Backend creates or reactivates `room_member` record:
+   - **If user has inactive membership** (`is_active = false`): Reactivate it by setting `is_active = true`, update `last_active_at`.
+   - **If user has no membership**: Create new record:
+     - `room_id` = target room ID
+     - `app_user_id` = user ID
+     - `role` = `PARTICIPANT` (default role)
+     - `joined_at` = current timestamp
+     - `last_active_at` = current timestamp
+     - `is_active` = true
 8. Backend updates Redis:
    - `SADD partywave:room:{roomId}:members:online {userId}`
 9. Backend returns room data and current state:
@@ -295,18 +304,22 @@ com.partywave
    - **Note**: Frontend can filter by `status` to show active tracks (`QUEUED`/`PLAYING`) separately from history (`PLAYED`/`SKIPPED`)
 
 **Database Impact**:
-- `room_member` table: INSERT
+
+- `room_member` table: INSERT (new membership) or UPDATE (reactivate existing membership with `is_active = true`)
 - `room_invitation` table: UPDATE `used_count` (if joining via invitation)
 - `room_access` table: INSERT (optional, if joining via invitation and audit trail is desired)
 - `app_user` table: UPDATE `last_active_at`
 
 **AI Agent Notes**:
+
 - **Private room access control**:
   - Check `room.is_public` flag. If `false`, require either:
     - `room_access` record exists for this user, OR
     - Valid `room_invitation` token (check `is_active`, `expires_at`, `used_count < max_uses`).
-  - If joining via invitation token, increment `room_invitation.used_count`.
+  - If joining via invitation token, increment `room_invitation.used_count` atomically.
   - Optionally create `room_access` record when user joins via invitation (for audit trail).
+- **Membership reactivation**: If user previously left the room (`is_active = false`), reactivate existing membership instead of creating a duplicate. Preserves `joined_at` timestamp for history.
+- **Active member counting**: All member count queries must filter by `is_active = true` to count only active members for room capacity checks.
 - Consider rate limiting for room joins to prevent abuse.
 - When user joins, emit WebSocket event to notify other room members.
 
@@ -338,9 +351,11 @@ com.partywave
 5. Backend returns success response.
 
 **Database Impact**:
+
 - `room_access` table: INSERT
 
 **AI Agent Notes**:
+
 - Explicit access grants allow users to join private rooms without invitation tokens.
 - Users with explicit access can join the room directly (see section 2.3, step 5).
 
@@ -374,9 +389,11 @@ com.partywave
 6. Requester shares invitation link/token with intended users.
 
 **Database Impact**:
+
 - `room_invitation` table: INSERT
 
 **AI Agent Notes**:
+
 - Invitation tokens can be shared via links, QR codes, or direct token strings.
 - Tokens can be revoked by setting `is_active = false` (room owner can revoke).
 - When token is used, `used_count` is incremented (see section 2.3, step 5).
@@ -393,16 +410,59 @@ com.partywave
 4. Backend returns success response.
 
 **Database Impact**:
+
 - `room_invitation` table: UPDATE `is_active`
 - `room_access` table: DELETE (or soft delete)
 
 **AI Agent Notes**:
+
 - Revoking access does not remove existing `room_member` records (users already in room remain).
 - Consider notifying affected users when access is revoked.
 
 ---
 
-### 2.5 Adding Tracks to Playlist
+### 2.5 Room Leave & Cleanup
+
+**Feature**: Users can leave rooms they are members of. Room state is cleaned up when all users leave.
+
+**Workflow**:
+
+1. **Authenticated user** (JWT token required) requests to leave a room.
+2. Backend validates:
+   - User is an active member of the room (check `room_member` WHERE `room_id = X AND app_user_id = Y AND is_active = true`).
+3. Backend performs soft delete:
+   - Update `room_member` record: Set `is_active = false`, update `last_active_at = NOW()`.
+   - Record remains in database for history tracking.
+4. Backend updates Redis:
+   - Remove user from online members: `SREM partywave:room:{roomId}:members:online {userId}`
+5. Backend checks if any online members remain:
+   - Query: `SCARD partywave:room:{roomId}:members:online`
+6. **If no online members remain** (last user left):
+   - Set TTL for all room Redis keys (1 hour = 3600 seconds):
+     - Online members set: `EXPIRE partywave:room:{roomId}:members:online 3600`
+     - Playlist list and items: `EXPIRE partywave:room:{roomId}:playlist* 3600`
+     - Playback state: `EXPIRE partywave:room:{roomId}:playback 3600`
+     - Like/dislike sets: `EXPIRE partywave:room:{roomId}:playlist:item:*:likes 3600` and `*:dislikes 3600`
+   - Room state can be resumed if someone rejoins within 1 hour.
+7. Backend returns success (204 NO_CONTENT).
+
+**Database Impact**:
+
+- `room_member` table: UPDATE (set `is_active = false`, update `last_active_at`)
+- No records are deleted (soft delete preserves history)
+
+**AI Agent Notes**:
+
+- **Soft delete pattern**: Setting `is_active = false` preserves membership history while removing user from active member counts.
+- **lastActiveAt tracking**: This timestamp tracks when user last left or was last active in the room.
+- **Redis TTL**: When all users leave, Redis keys expire after 1 hour. If someone rejoins within that time, room state is preserved. After expiration, room state is lost but database records remain.
+- **Rejoining**: Users can rejoin rooms they previously left. Their existing membership record is reactivated (see section 2.3).
+- **Owner leaving**: Consider adding business logic to prevent room owners from leaving or transfer ownership before leaving.
+- Emit WebSocket event `USER_LEFT` to notify remaining room members when user leaves.
+
+---
+
+### 2.6 Adding Tracks to Playlist
 
 **Feature**: Room members can search for Spotify tracks and add them to the room's playlist (always appended to the end).
 
@@ -418,6 +478,7 @@ The PartyWave playlist system uses a single unified list that contains **all tra
   - To get active tracks, filter by checking each item's `status` field
 
 **Key Concepts**:
+
 - **Sequence Number**: Each playlist item gets a unique integer `sequence_number` (1, 2, 3, ...) indicating the order it was added. This ensures clear chronological ordering.
 - **Status-Based Filtering**: The playlist list contains all tracks. Filter by `status` field to get:
   - Active tracks: `status = QUEUED` or `status = PLAYING`
@@ -458,6 +519,7 @@ The PartyWave playlist system uses a single unified list that contains **all tra
 10. Backend returns success response.
 
 **AI Agent Notes**:
+
 - Tracks are **always appended to the end** of the playlist (FIFO queue).
 - Use Spotify Search API endpoints (see `SPOTIFY_SEARCH_ENDPOINTS.md`).
 - All playlist items and track metadata are stored **only in Redis** (no PostgreSQL tables).
@@ -471,17 +533,18 @@ The PartyWave playlist system uses a single unified list that contains **all tra
   - New `added_at_ms` timestamp
   - New `added_by_id` (may be same or different user)
 - Consider deduplication: prevent adding the same track multiple times in quick succession (optional business rule at application level).
-- If playlist is empty and no track is currently playing, backend should auto-start the first track (see section 2.6).
+- If playlist is empty and no track is currently playing, backend should auto-start the first track (see section 2.7).
 
 ---
 
-### 2.6 Synchronized Playback (Spotify Web SDK)
+### 2.7 Synchronized Playback (Spotify Web SDK)
 
 **Feature**: All users in a room listen to the same track simultaneously, synchronized via Spotify Web SDK and backend coordination.
 
 **Workflow**:
 
 1. **Initial Playback Start** (when first track is added or room becomes active):
+
    - Backend finds first track with `status = QUEUED` from Redis playlist list:
      - Iterate through `LRANGE partywave:room:{roomId}:playlist 0 -1`
      - For each item ID, check `HGET partywave:room:{roomId}:playlist:item:{itemId} status`
@@ -508,6 +571,7 @@ The PartyWave playlist system uses a single unified list that contains **all tra
      - All clients are now synchronized.
 
 2. **Track Completion** (when track finishes naturally):
+
    - Client-side: Spotify player emits `player_state_changed` event when track ends.
    - Frontend notifies backend (optional, or backend can track via `started_at_ms + duration_ms`).
    - **Backend validates status**: Ensure current track status is `PLAYING` before marking as `PLAYED`.
@@ -528,6 +592,7 @@ The PartyWave playlist system uses a single unified list that contains **all tra
    - Frontend calculates elapsed time and seeks accordingly.
 
 **AI Agent Notes**:
+
 - **Tracks cannot be paused** (business rule). Once started, they play until completion or skip.
 - **Status transitions**: Playlist items follow a strict state machine:
   - `QUEUED` → `PLAYING` (when track starts)
@@ -542,7 +607,7 @@ The PartyWave playlist system uses a single unified list that contains **all tra
 
 ---
 
-### 2.7 Skipping Tracks (Vote-Based)
+### 2.8 Skipping Tracks (Vote-Based)
 
 **Feature**: Room members can vote to skip the currently playing track. When threshold is reached, track is skipped.
 
@@ -583,10 +648,12 @@ The PartyWave playlist system uses a single unified list that contains **all tra
 8. Backend returns vote status to requester.
 
 **Database Impact**:
+
 - `vote` table: INSERT (PostgreSQL)
 - No playlist item updates in PostgreSQL (all in Redis)
 
 **AI Agent Notes**:
+
 - **Status validation**: Before skipping a track, ensure its status is `PLAYING`. Reject attempts to skip tracks with status `PLAYED` or `SKIPPED` (these are final states).
 - **Final state**: Status `SKIPPED` is final - a skipped track cannot become `PLAYING` again as the same playlist item. The same Spotify track can be added again later, but it will be a new playlist item.
 
@@ -596,7 +663,7 @@ The PartyWave playlist system uses a single unified list that contains **all tra
 
 ---
 
-### 2.8 Kicking Users (Vote-Based)
+### 2.9 Kicking Users (Vote-Based)
 
 **Feature**: Room members can vote to kick a user from the room. When threshold is reached, user is removed.
 
@@ -632,17 +699,19 @@ The PartyWave playlist system uses a single unified list that contains **all tra
    - Backend returns success to requester.
 
 **Database Impact**:
+
 - `vote` table: INSERT
 - `room_member` table: DELETE (or soft delete)
 
 **AI Agent Notes**:
-- Consider soft-deleting `room_member` instead of hard delete to preserve history.
+
+- **Soft delete**: Use `is_active = false` instead of hard delete to preserve history (see section 2.5 for room leave pattern).
 - Reset votes when user is kicked (delete all KICKUSER votes for that user in that room).
 - Room owner immunity is a common pattern (implement in validation step 1).
 
 ---
 
-### 2.9 Like / Dislike Tracks
+### 2.10 Like / Dislike Tracks
 
 **Feature**: Room members can like or dislike tracks in the playlist. Likes/dislikes affect the track adder's profile statistics.
 
@@ -684,10 +753,12 @@ The PartyWave playlist system uses a single unified list that contains **all tra
 7. Backend returns success response.
 
 **Database Impact**:
+
 - `app_user_stats` table: UPDATE (PostgreSQL)
 - No `playlist_item_stats` operations (all in Redis)
 
 **AI Agent Notes**:
+
 - Users can change their vote (like → dislike or vice versa).
 - Statistics are aggregated per user who **added** the track, not per track.
 - **Critical**: When updating like/dislike in Redis, always update `app_user_stats` in PostgreSQL for the track adder. This ensures user statistics persist even after rooms close.
@@ -696,7 +767,7 @@ The PartyWave playlist system uses a single unified list that contains **all tra
 
 ---
 
-### 2.10 Adding Tracks to Spotify (User's Library / Playlist)
+### 2.11 Adding Tracks to Spotify (User's Library / Playlist)
 
 **Feature**: Users can save the currently playing track to their Spotify library (liked songs) or add it to a Spotify playlist.
 
@@ -715,16 +786,18 @@ The PartyWave playlist system uses a single unified list that contains **all tra
 5. Backend returns success/error response to frontend.
 
 **Database Impact**:
+
 - None (this is a Spotify API operation only, track data comes from Redis)
 
 **AI Agent Notes**:
+
 - Use Spotify User Library API or Playlists API (see `SPOTIFY_USER_ENDPOINTS.md`).
 - Handle token refresh if access token is expired.
 - This feature does not affect PartyWave database, only user's Spotify account.
 
 ---
 
-### 2.11 Chat Messaging
+### 2.12 Chat Messaging
 
 **Feature**: Room members can send chat messages in real-time.
 
@@ -744,16 +817,18 @@ The PartyWave playlist system uses a single unified list that contains **all tra
 5. Backend returns success response.
 
 **Database Impact**:
+
 - `chat_message` table: INSERT
 
 **AI Agent Notes**:
+
 - All chat messages are persisted in PostgreSQL for history.
 - Consider pagination for chat history when user joins room (e.g., last 100 messages).
 - WebSocket events enable real-time delivery; database provides persistence.
 
 ---
 
-### 2.12 User Profile Viewing & Statistics
+### 2.13 User Profile Viewing & Statistics
 
 **Feature**: Users can view other users' profiles, including statistics (like/dislike totals) and basic profile information.
 
@@ -768,9 +843,11 @@ The PartyWave playlist system uses a single unified list that contains **all tra
 4. Backend returns profile data to frontend.
 
 **Database Impact**:
+
 - Read-only queries
 
 **AI Agent Notes**:
+
 - Profile data is public (or restricted based on privacy settings, if implemented).
 - Statistics (`app_user_stats`) are updated in real-time when playlist items receive likes/dislikes in Redis (see section 2.9). The `app_user_stats` table is updated in PostgreSQL immediately when a like/dislike is added/updated in Redis.
 - Historical track lists are not available since playlist items are cleaned up when rooms close.
@@ -783,6 +860,7 @@ The PartyWave playlist system uses a single unified list that contains **all tra
 PartyWave uses WebSocket for real-time updates. **All WebSocket connections must be authenticated using JWT tokens** (see `AUTHENTICATION.md` section 3).
 
 **WebSocket Connection Flow**:
+
 1. Client connects to WebSocket endpoint with JWT token (in URL query parameter or initial message).
 2. Backend validates JWT token (same validation as API requests).
 3. If authentication fails, connection is closed with code `1008` (Policy Violation).
@@ -816,6 +894,7 @@ Common event types:
 - `VOTE_THRESHOLD_REACHED`: Vote threshold reached, action executed
 
 **AI Agent Notes**:
+
 - **WebSocket Authentication**: All WebSocket connections must be authenticated using JWT tokens before allowing any operations. See `AUTHENTICATION.md` section 3 for detailed specifications.
 - **Room Subscription**: Users must subscribe to rooms after authentication. Subscription requires room membership verification (PostgreSQL `room_member` table).
 - **Message Authorization**: All room-related messages require room subscription and membership verification.
@@ -828,7 +907,8 @@ Common event types:
 
 ## 4. Business Rules Summary
 
-1. **Playlist Ordering**: 
+1. **Playlist Ordering**:
+
    - Tracks are always appended to the end of the playlist list (FIFO queue).
    - Each playlist item has a `sequence_number` indicating chronological order of addition.
    - The playlist list (`partywave:room:{roomId}:playlist`) contains **all tracks** regardless of status (`QUEUED`, `PLAYING`, `PLAYED`, `SKIPPED`).
@@ -858,6 +938,7 @@ Common event types:
 ### 5.1 Spotify API
 
 PartyWave integrates with Spotify for:
+
 - **Authentication**: OAuth 2.0 flow (external authentication provider)
 - **User Profile**: Fetch user data and images
 - **Search**: Search for tracks to add to playlists
@@ -871,6 +952,7 @@ See `SPOTIFY_*.md` documents for endpoint specifications.
 ### 5.2 Database Schema
 
 See `POSTGRES_SCHEMA.md` for:
+
 - Table definitions
 - Relationships
 - Enums and constraints
@@ -879,6 +961,7 @@ See `POSTGRES_SCHEMA.md` for:
 ### 5.3 Redis Architecture
 
 See `REDIS_ARCHITECTURE.md` for:
+
 - Key naming conventions
 - Data structures (LIST, HASH, SET)
 - TTL and cleanup strategies
@@ -925,4 +1008,3 @@ When implementing PartyWave features:
 ---
 
 This document provides a high-level overview. For implementation details, refer to the technical documentation files (`POSTGRES_SCHEMA.md`, `REDIS_ARCHITECTURE.md`, `SPOTIFY_*.md`).
-

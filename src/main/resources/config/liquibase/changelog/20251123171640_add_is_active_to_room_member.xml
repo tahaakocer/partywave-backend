@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:ext="http://www.liquibase.org/xml/ns/dbchangelog-ext"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd
+                        http://www.liquibase.org/xml/ns/dbchangelog-ext http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-ext.xsd">
+
+    <!--
+        Add is_active column to room_member table for soft delete support.
+    -->
+    <changeSet id="20251123171640-1" author="partywave">
+        <addColumn tableName="room_member">
+            <column name="is_active" type="boolean" defaultValueBoolean="true">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+    </changeSet>
+
+    <!--
+        Update existing records to set is_active = true.
+    -->
+    <changeSet id="20251123171640-2" author="partywave">
+        <update tableName="room_member">
+            <column name="is_active" valueBoolean="true"/>
+        </update>
+    </changeSet>
+
+</databaseChangeLog>
+

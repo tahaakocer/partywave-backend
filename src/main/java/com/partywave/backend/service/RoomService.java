@@ -3,16 +3,20 @@ package com.partywave.backend.service;
 import com.partywave.backend.domain.AppUser;
 import com.partywave.backend.domain.ChatMessage;
 import com.partywave.backend.domain.Room;
+import com.partywave.backend.domain.RoomInvitation;
 import com.partywave.backend.domain.RoomMember;
 import com.partywave.backend.domain.Tag;
 import com.partywave.backend.domain.enumeration.RoomMemberRole;
 import com.partywave.backend.exception.AlreadyMemberException;
+import com.partywave.backend.exception.InvalidInvitationException;
 import com.partywave.backend.exception.InvalidRequestException;
 import com.partywave.backend.exception.ResourceNotFoundException;
 import com.partywave.backend.exception.RoomFullException;
-import com.partywave.backend.exception.RoomNotPublicException;
+import com.partywave.backend.exception.UnauthorizedRoomAccessException;
 import com.partywave.backend.repository.AppUserRepository;
 import com.partywave.backend.repository.ChatMessageRepository;
+import com.partywave.backend.repository.RoomAccessRepository;
+import com.partywave.backend.repository.RoomInvitationRepository;
 import com.partywave.backend.repository.RoomMemberRepository;
 import com.partywave.backend.repository.RoomRepository;
 import com.partywave.backend.repository.TagRepository;
@@ -52,6 +56,8 @@ public class RoomService {
 
     private final RoomRepository roomRepository;
     private final RoomMemberRepository roomMemberRepository;
+    private final RoomAccessRepository roomAccessRepository;
+    private final RoomInvitationRepository roomInvitationRepository;
     private final TagRepository tagRepository;
     private final AppUserRepository appUserRepository;
     private final ChatMessageRepository chatMessageRepository;
@@ -66,6 +72,8 @@ public class RoomService {
     public RoomService(
         RoomRepository roomRepository,
         RoomMemberRepository roomMemberRepository,
+        RoomAccessRepository roomAccessRepository,
+        RoomInvitationRepository roomInvitationRepository,
         TagRepository tagRepository,
         AppUserRepository appUserRepository,
         ChatMessageRepository chatMessageRepository,
@@ -79,6 +87,8 @@ public class RoomService {
     ) {
         this.roomRepository = roomRepository;
         this.roomMemberRepository = roomMemberRepository;
+        this.roomAccessRepository = roomAccessRepository;
+        this.roomInvitationRepository = roomInvitationRepository;
         this.tagRepository = tagRepository;
         this.appUserRepository = appUserRepository;
         this.chatMessageRepository = chatMessageRepository;
@@ -261,8 +271,8 @@ public class RoomService {
         Room room = roomOpt.get();
         RoomResponseDTO response = roomMapper.toDto(room);
 
-        // Set member count
-        long memberCount = roomMemberRepository.countByRoom(room);
+        // Set member count (only active members)
+        long memberCount = roomMemberRepository.countByRoomAndIsActiveTrue(room);
         response.setMemberCount((int) memberCount);
 
         // Set online member count from Redis
@@ -374,32 +384,32 @@ public class RoomService {
     }
 
     /**
-     * Join a public room.
+     * Join a room (public or private with invitation token).
      *
      * Workflow (based on PROJECT_OVERVIEW.md section 2.3):
      * 1. Validate room exists
-     * 2. Validate room is public (is_public = true)
-     * 3. Validate room is not full (member count < max_participants)
-     * 4. Validate user is not already a member
-     * 5. Create RoomMember entity with PARTICIPANT role
-     * 6. Add user to Redis online members set
-     * 7. Build complete room state response:
-     *    - Room details (name, description, tags, max participants)
-     *    - Complete playlist with metadata and feedback counts
-     *    - Current playback state (if a track is playing)
-     *    - Recent chat history (last 50 messages)
+     * 2. Check if user is already an active member
+     * 3. Check if user has inactive membership (reactivate if so)
+     * 4. For public rooms: allow join without checks
+     * 5. For private rooms: validate access (RoomAccess or invitation token)
+     * 6. Validate room is not full (only active members count)
+     * 7. Create or reactivate RoomMember entity
+     * 8. Add user to Redis online members set
+     * 9. Build complete room state response
      *
      * @param roomId UUID of the room to join
      * @param userId UUID of the authenticated user joining the room
+     * @param invitationToken Optional invitation token for private rooms
      * @return RoomStateResponseDTO with complete room state
      * @throws ResourceNotFoundException if user or room not found
-     * @throws RoomNotPublicException if room is private
+     * @throws UnauthorizedRoomAccessException if user cannot access private room
+     * @throws InvalidInvitationException if invitation token is invalid
      * @throws RoomFullException if room has reached maximum capacity
-     * @throws AlreadyMemberException if user is already a member
+     * @throws AlreadyMemberException if user is already an active member
      */
     @Transactional
-    public RoomStateResponseDTO joinRoom(UUID roomId, UUID userId) {
-        log.debug("User {} attempting to join room {}", userId, roomId);
+    public RoomStateResponseDTO joinRoom(UUID roomId, UUID userId, String invitationToken) {
+        log.debug("User {} attempting to join room {} with invitation token: {}", userId, roomId, invitationToken != null);
 
         // Step 1: Validate room exists
         Room room = roomRepository
@@ -409,27 +419,82 @@ public class RoomService {
                 return new ResourceNotFoundException("Room", "id", roomId);
             });
 
-        // Step 2: Validate room is public
-        if (Boolean.FALSE.equals(room.getIsPublic())) {
-            log.error("Attempt to join private room: {} by user: {}", roomId, userId);
-            throw new RoomNotPublicException(roomId);
-        }
-
-        // Step 3: Validate room is not full
-        long currentMemberCount = roomMemberRepository.countByRoom(room);
-        if (currentMemberCount >= room.getMaxParticipants()) {
-            log.error("Room is full: {} - Current members: {}, Max: {}", roomId, currentMemberCount, room.getMaxParticipants());
-            throw new RoomFullException((int) currentMemberCount, room.getMaxParticipants());
-        }
-
-        // Step 4: Validate user is not already a member
-        boolean isAlreadyMember = roomMemberRepository.existsByRoomIdAndUserId(roomId, userId);
-        if (isAlreadyMember) {
-            log.error("Illegal argument: [{}, {}] in joinRoom()", roomId, userId);
+        // Step 2: Check if user is already an active member
+        boolean isActivelyMember = roomMemberRepository.existsByRoomIdAndUserIdAndIsActiveTrue(roomId, userId);
+        if (isActivelyMember) {
+            log.error("User {} is already an active member of room {}", userId, roomId);
             throw new AlreadyMemberException(userId, roomId);
         }
 
-        // Step 5: Get user entity
+        // Step 3: Check if user has inactive membership (for reactivation)
+        Optional<RoomMember> existingMembershipOpt = roomMemberRepository.findByRoomIdAndUserId(roomId, userId);
+
+        // Step 4: For private rooms, validate access
+        if (Boolean.FALSE.equals(room.getIsPublic())) {
+            log.debug("Room {} is private, checking access for user {}", roomId, userId);
+
+            // Check if user has explicit access
+            boolean hasExplicitAccess = roomAccessRepository.existsByRoomIdAndAppUserId(roomId, userId);
+
+            if (!hasExplicitAccess) {
+                // No explicit access, check invitation token
+                if (invitationToken == null || invitationToken.trim().isEmpty()) {
+                    log.error("User {} attempted to join private room {} without invitation token", userId, roomId);
+                    throw new UnauthorizedRoomAccessException(roomId, userId);
+                }
+
+                // Validate invitation token
+                RoomInvitation invitation = roomInvitationRepository
+                    .findByTokenAndIsActiveTrue(invitationToken)
+                    .orElseThrow(() -> {
+                        log.error("Invalid or inactive invitation token: {}", invitationToken);
+                        return new InvalidInvitationException(invitationToken, "Token not found or inactive");
+                    });
+
+                // Verify token belongs to this room
+                if (!invitation.getRoom().getId().equals(roomId)) {
+                    log.error(
+                        "Invitation token {} belongs to room {}, but user tried to join room {}",
+                        invitationToken,
+                        invitation.getRoom().getId(),
+                        roomId
+                    );
+                    throw new InvalidInvitationException(invitationToken, "Token does not belong to this room");
+                }
+
+                // Check if token is expired
+                if (invitation.getExpiresAt() != null && invitation.getExpiresAt().isBefore(Instant.now())) {
+                    log.error("Invitation token {} has expired at {}", invitationToken, invitation.getExpiresAt());
+                    throw new InvalidInvitationException(invitationToken, "Token has expired");
+                }
+
+                // Check if token has reached max uses
+                if (invitation.getMaxUses() != null && invitation.getUsedCount() >= invitation.getMaxUses()) {
+                    log.error(
+                        "Invitation token {} has reached max uses: {}/{}",
+                        invitationToken,
+                        invitation.getUsedCount(),
+                        invitation.getMaxUses()
+                    );
+                    throw new InvalidInvitationException(invitationToken, "Token has reached maximum uses");
+                }
+
+                // Increment used count atomically
+                roomInvitationRepository.incrementUsedCount(invitation.getId());
+                log.debug("Incremented used count for invitation token {}", invitationToken);
+            } else {
+                log.debug("User {} has explicit access to private room {}", userId, roomId);
+            }
+        }
+
+        // Step 5: Validate room is not full (only count active members)
+        long currentMemberCount = roomMemberRepository.countByRoomAndIsActiveTrue(room);
+        if (currentMemberCount >= room.getMaxParticipants()) {
+            log.error("Room is full: {} - Active members: {}, Max: {}", roomId, currentMemberCount, room.getMaxParticipants());
+            throw new RoomFullException((int) currentMemberCount, room.getMaxParticipants());
+        }
+
+        // Step 6: Get user entity
         AppUser user = appUserRepository
             .findById(userId)
             .orElseThrow(() -> {
@@ -437,28 +502,41 @@ public class RoomService {
                 return new ResourceNotFoundException("User", "id", userId);
             });
 
-        // Step 6: Create RoomMember with PARTICIPANT role
-        RoomMember roomMember = new RoomMember();
-        roomMember.setRoom(room);
-        roomMember.setAppUser(user);
-        roomMember.setRole(RoomMemberRole.PARTICIPANT);
+        // Step 7: Create or reactivate RoomMember
+        RoomMember roomMember;
         Instant now = Instant.now();
-        roomMember.setJoinedAt(now);
-        roomMember.setLastActiveAt(now);
+
+        if (existingMembershipOpt.isPresent()) {
+            // Reactivate existing membership
+            roomMember = existingMembershipOpt.get();
+            roomMember.setIsActive(true);
+            roomMember.setLastActiveAt(now);
+            log.debug("Reactivating membership for user {} in room {}", userId, roomId);
+        } else {
+            // Create new membership
+            roomMember = new RoomMember();
+            roomMember.setRoom(room);
+            roomMember.setAppUser(user);
+            roomMember.setRole(RoomMemberRole.PARTICIPANT);
+            roomMember.setJoinedAt(now);
+            roomMember.setLastActiveAt(now);
+            roomMember.setIsActive(true);
+            log.debug("Creating new membership for user {} in room {}", userId, roomId);
+        }
 
         roomMemberRepository.save(roomMember);
-        log.debug("Created room member with PARTICIPANT role for user {} in room {}", userId, roomId);
+        log.debug("Saved room member with PARTICIPANT role for user {} in room {}", userId, roomId);
 
-        // Step 7: Add user to Redis online members
+        // Step 8: Add user to Redis online members
         String roomIdStr = roomId.toString();
         String userIdStr = userId.toString();
         onlineMembersRedisService.addOnlineMember(roomIdStr, userIdStr);
         log.debug("Added user {} to online members for room {}", userId, roomId);
 
-        // Step 8: Build complete room state response
+        // Step 9: Build complete room state response
         RoomStateResponseDTO response = new RoomStateResponseDTO();
 
-        // 8a. Set room details
+        // 9a. Set room details
         RoomResponseDTO roomDto = roomMapper.toDto(room);
         roomDto.setMemberCount((int) (currentMemberCount + 1)); // Include the user who just joined
         long onlineCount = onlineMembersRedisService.getOnlineMemberCount(roomIdStr);
@@ -474,15 +552,15 @@ public class RoomService {
 
         response.setRoom(roomDto);
 
-        // 8b. Get complete playlist from Redis with metadata and feedback counts
+        // 9b. Get complete playlist from Redis with metadata and feedback counts
         List<PlaylistItemDTO> playlist = buildPlaylistResponse(roomIdStr);
         response.setPlaylist(playlist);
 
-        // 8c. Get playback state from Redis (if a track is playing)
+        // 9c. Get playback state from Redis (if a track is playing)
         PlaybackStateDTO playbackState = buildPlaybackStateResponse(roomIdStr);
         response.setPlaybackState(playbackState);
 
-        // 8d. Get recent chat history (last 50 messages)
+        // 9d. Get recent chat history (last 50 messages)
         List<ChatMessageDTO> chatHistory = buildChatHistoryResponse(roomId);
         response.setChatHistory(chatHistory);
 
@@ -601,6 +679,68 @@ public class RoomService {
             log.error("Failed to build chat history response for room {}", roomId, e);
             return Collections.emptyList();
         }
+    }
+
+    /**
+     * Leave a room.
+     *
+     * Workflow:
+     * 1. Find active RoomMember record
+     * 2. Soft delete: set is_active = false, update lastActiveAt
+     * 3. Remove user from Redis online members
+     * 4. If no online members left, set TTL for room Redis keys (1 hour)
+     *
+     * @param roomId UUID of the room to leave
+     * @param userId UUID of the authenticated user leaving the room
+     * @throws ResourceNotFoundException if user is not an active member of the room
+     */
+    @Transactional
+    public void leaveRoom(UUID roomId, UUID userId) {
+        log.debug("User {} attempting to leave room {}", userId, roomId);
+
+        // Step 1: Find active RoomMember record
+        RoomMember roomMember = roomMemberRepository
+            .findByRoomIdAndUserIdAndIsActiveTrue(roomId, userId)
+            .orElseThrow(() -> {
+                log.error("User {} is not an active member of room {}", userId, roomId);
+                return new ResourceNotFoundException("RoomMember", "roomId/userId", roomId + "/" + userId);
+            });
+
+        // Step 2: Soft delete - set is_active = false, update lastActiveAt
+        Instant now = Instant.now();
+        roomMember.setIsActive(false);
+        roomMember.setLastActiveAt(now);
+        roomMemberRepository.save(roomMember);
+        log.debug("Soft deleted room member for user {} in room {}", userId, roomId);
+
+        // Step 3: Remove user from Redis online members
+        String roomIdStr = roomId.toString();
+        String userIdStr = userId.toString();
+        onlineMembersRedisService.removeOnlineMember(roomIdStr, userIdStr);
+        log.debug("Removed user {} from online members for room {}", userId, roomId);
+
+        // Step 4: Check if room has any online members left
+        boolean hasOnlineMembers = onlineMembersRedisService.hasOnlineMembers(roomIdStr);
+
+        if (!hasOnlineMembers) {
+            // No online members left, set TTL for room Redis keys (1 hour = 3600 seconds)
+            log.info("No online members left in room {}, setting TTL for Redis keys", roomId);
+
+            // Set TTL for online members set
+            onlineMembersRedisService.setOnlineMembersTTL(roomIdStr, 3600);
+
+            // Set TTL for playlist keys
+            playlistRedisService.setPlaylistTTL(roomIdStr, 3600);
+
+            // Set TTL for playback state
+            playbackRedisService.setPlaybackTTL(roomIdStr, 3600);
+
+            log.info("Set 1 hour TTL for all Redis keys in room {}", roomId);
+        } else {
+            log.debug("Room {} still has online members, not setting TTL", roomId);
+        }
+
+        log.info("User {} successfully left room {}", userId, roomId);
     }
 
     /**

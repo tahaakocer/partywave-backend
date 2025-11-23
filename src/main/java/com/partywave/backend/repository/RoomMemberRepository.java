@@ -59,4 +59,42 @@ public interface RoomMemberRepository extends JpaRepository<RoomMember, UUID> {
      */
     @Query("select count(rm) > 0 from RoomMember rm where rm.room.id = :roomId and rm.appUser.id = :userId")
     boolean existsByRoomIdAndUserId(@Param("roomId") UUID roomId, @Param("userId") UUID userId);
+
+    /**
+     * Check if a user is an active member of a room.
+     *
+     * @param roomId Room UUID
+     * @param userId User UUID
+     * @return true if user is an active member
+     */
+    @Query("select count(rm) > 0 from RoomMember rm where rm.room.id = :roomId and rm.appUser.id = :userId and rm.isActive = true")
+    boolean existsByRoomIdAndUserIdAndIsActiveTrue(@Param("roomId") UUID roomId, @Param("userId") UUID userId);
+
+    /**
+     * Find active room member by room ID and user ID.
+     *
+     * @param roomId Room UUID
+     * @param userId User UUID
+     * @return Optional of RoomMember
+     */
+    @Query("select rm from RoomMember rm where rm.room.id = :roomId and rm.appUser.id = :userId and rm.isActive = true")
+    Optional<RoomMember> findByRoomIdAndUserIdAndIsActiveTrue(@Param("roomId") UUID roomId, @Param("userId") UUID userId);
+
+    /**
+     * Find room member by room ID and user ID (including inactive).
+     *
+     * @param roomId Room UUID
+     * @param userId User UUID
+     * @return Optional of RoomMember
+     */
+    @Query("select rm from RoomMember rm where rm.room.id = :roomId and rm.appUser.id = :userId")
+    Optional<RoomMember> findByRoomIdAndUserId(@Param("roomId") UUID roomId, @Param("userId") UUID userId);
+
+    /**
+     * Count active members in a room.
+     *
+     * @param room Room entity
+     * @return Number of active members
+     */
+    long countByRoomAndIsActiveTrue(Room room);
 }

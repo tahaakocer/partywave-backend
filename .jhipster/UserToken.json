@@ -12,12 +12,12 @@
     },
     {
       "fieldName": "accessToken",
-      "fieldType": "String",
+      "fieldType": "Text",
       "fieldValidateRules": ["required"]
     },
     {
       "fieldName": "refreshToken",
-      "fieldType": "String",
+      "fieldType": "Text",
       "fieldValidateRules": ["required"]
     },
     {

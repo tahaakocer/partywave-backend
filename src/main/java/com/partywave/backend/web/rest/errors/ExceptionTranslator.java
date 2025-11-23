@@ -3,6 +3,7 @@ package com.partywave.backend.web.rest.errors;
 import static org.springframework.core.annotation.AnnotatedElementUtils.findMergedAnnotation;
 
 import com.partywave.backend.exception.AlreadyMemberException;
+import com.partywave.backend.exception.InvalidInvitationException;
 import com.partywave.backend.exception.InvalidRequestException;
 import com.partywave.backend.exception.InvalidTokenException;
 import com.partywave.backend.exception.ResourceNotFoundException;
@@ -11,6 +12,7 @@ import com.partywave.backend.exception.RoomNotPublicException;
 import com.partywave.backend.exception.SpotifyApiException;
 import com.partywave.backend.exception.TokenEncryptionException;
 import com.partywave.backend.exception.TokenGenerationException;
+import com.partywave.backend.exception.UnauthorizedRoomAccessException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
 import java.util.Arrays;
@@ -208,6 +210,8 @@ public class ExceptionTranslator extends ResponseEntityExceptionHandler {
         if (err instanceof TokenEncryptionException) return "Token Encryption Error";
         if (err instanceof InvalidTokenException) return "Invalid Token";
         if (err instanceof TokenGenerationException) return "Token Generation Error";
+        if (err instanceof InvalidInvitationException) return "Invalid Invitation";
+        if (err instanceof UnauthorizedRoomAccessException) return "Unauthorized Room Access";
         return null;
     }
 
@@ -222,7 +226,9 @@ public class ExceptionTranslator extends ResponseEntityExceptionHandler {
             err instanceof SpotifyApiException ||
             err instanceof TokenEncryptionException ||
             err instanceof InvalidTokenException ||
-            err instanceof TokenGenerationException
+            err instanceof TokenGenerationException ||
+            err instanceof InvalidInvitationException ||
+            err instanceof UnauthorizedRoomAccessException
         ) {
             return err.getMessage();
         }
@@ -251,6 +257,8 @@ public class ExceptionTranslator extends ResponseEntityExceptionHandler {
         if (err instanceof TokenEncryptionException) return HttpStatus.INTERNAL_SERVER_ERROR;
         if (err instanceof InvalidTokenException) return HttpStatus.UNAUTHORIZED;
         if (err instanceof TokenGenerationException) return HttpStatus.INTERNAL_SERVER_ERROR;
+        if (err instanceof InvalidInvitationException) return HttpStatus.BAD_REQUEST;
+        if (err instanceof UnauthorizedRoomAccessException) return HttpStatus.FORBIDDEN;
         return null;
     }
 

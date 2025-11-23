@@ -133,18 +133,22 @@ public class RoomController {
     }
 
     /**
-     * POST /api/rooms/:roomId/join : Join a public room.
+     * POST /api/rooms/:roomId/join : Join a room (public or private with invitation token).
      *
-     * Allows an authenticated user to join a public room.
+     * Allows an authenticated user to join a room.
+     * - Public rooms: No invitation token required
+     * - Private rooms: Requires either explicit RoomAccess grant or valid invitation token
+     *
      * Validations:
      * - Room must exist
-     * - Room must be public (is_public = true)
-     * - Room must not be full (current members < max_participants)
-     * - User must not already be a member
+     * - For private rooms: user must have access OR provide valid invitation token
+     * - Room must not be full (current active members < max_participants)
+     * - User must not already be an active member
      *
      * On success:
-     * - Creates RoomMember record with PARTICIPANT role
+     * - Creates or reactivates RoomMember record with PARTICIPANT role and is_active = true
      * - Adds user to Redis online members set
+     * - If invitation token used, increments its used_count
      * - Returns complete room state including:
      *   - Room details (name, description, tags, max participants)
      *   - Complete playlist with track metadata and feedback counts
@@ -154,15 +158,19 @@ public class RoomController {
      * Based on PROJECT_OVERVIEW.md section 2.3 - Room Joining.
      *
      * @param roomId UUID of the room to join
+     * @param invitationToken Optional invitation token for private rooms
      * @return ResponseEntity with status 200 (OK) and RoomStateResponseDTO body, or:
-     *         - 400 (Bad Request) if validation fails
+     *         - 400 (Bad Request) if validation fails or invitation token is invalid
      *         - 401 (Unauthorized) if not authenticated
-     *         - 403 (Forbidden) if room is private
+     *         - 403 (Forbidden) if user cannot access private room
      *         - 404 (Not Found) if room doesn't exist
      */
     @PostMapping("/{roomId}/join")
-    public ResponseEntity<RoomStateResponseDTO> joinRoom(@PathVariable UUID roomId) {
-        log.debug("REST request to join room: {}", roomId);
+    public ResponseEntity<RoomStateResponseDTO> joinRoom(
+        @PathVariable UUID roomId,
+        @RequestParam(value = "invitation_token", required = false) String invitationToken
+    ) {
+        log.debug("REST request to join room: {} with invitation token: {}", roomId, invitationToken != null);
 
         // Extract authenticated user ID from JWT token
         UUID userId = extractUserIdFromAuthentication();
@@ -173,12 +181,48 @@ public class RoomController {
         }
 
         // Join room via service - exceptions will be handled by global exception handler
-        RoomStateResponseDTO result = roomService.joinRoom(roomId, userId);
+        RoomStateResponseDTO result = roomService.joinRoom(roomId, userId, invitationToken);
 
         log.info("User {} successfully joined room {}", userId, roomId);
 
         // Return 200 OK with complete room state
         return ResponseEntity.ok(result);
+    }
+
+    /**
+     * POST /api/rooms/:roomId/leave : Leave a room.
+     *
+     * Allows an authenticated user to leave a room they are currently an active member of.
+     *
+     * On success:
+     * - Soft deletes RoomMember record (sets is_active = false, updates lastActiveAt)
+     * - Removes user from Redis online members set
+     * - If no online members remain, sets TTL (1 hour) for all room Redis keys
+     *
+     * @param roomId UUID of the room to leave
+     * @return ResponseEntity with status 204 (NO_CONTENT) on success, or:
+     *         - 401 (Unauthorized) if not authenticated
+     *         - 404 (Not Found) if user is not an active member of the room
+     */
+    @PostMapping("/{roomId}/leave")
+    public ResponseEntity<Void> leaveRoom(@PathVariable UUID roomId) {
+        log.debug("REST request to leave room: {}", roomId);
+
+        // Extract authenticated user ID from JWT token
+        UUID userId = extractUserIdFromAuthentication();
+
+        if (userId == null) {
+            log.warn("Unauthorized room leave attempt - no valid JWT token");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
+        // Leave room via service - exceptions will be handled by global exception handler
+        roomService.leaveRoom(roomId, userId);
+
+        log.info("User {} successfully left room {}", userId, roomId);
+
+        // Return 204 NO_CONTENT
+        return ResponseEntity.noContent().build();
     }
 
     /**
