@@ -8,6 +8,7 @@ import com.partywave.backend.service.PlaylistService;
 import com.partywave.backend.service.SpotifyApiClient;
 import com.partywave.backend.service.dto.AddTrackRequestDTO;
 import com.partywave.backend.service.dto.AddTrackResponseDTO;
+import com.partywave.backend.service.dto.GetPlaylistResponseDTO;
 import com.partywave.backend.service.dto.SpotifyTrackSearchResultDTO;
 import com.partywave.backend.service.dto.TrackSearchResponseDTO;
 import jakarta.validation.Valid;
@@ -97,6 +98,45 @@ public class PlaylistController {
         );
 
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    /**
+     * GET /api/rooms/{roomId}/playlist : Get the complete playlist for a room
+     *
+     * Returns all playlist items (active + history) sorted by sequence number.
+     * User must be an active member of the room to view the playlist.
+     *
+     * Includes:
+     * - QUEUED tracks (waiting to play)
+     * - PLAYING track (currently playing)
+     * - PLAYED tracks (finished playing)
+     * - SKIPPED tracks (skipped by users)
+     *
+     * Each item includes:
+     * - Track metadata (name, artist, album, duration, image)
+     * - Status and sequence number
+     * - Like/dislike counts
+     * - User who added the track
+     *
+     * @param roomId Room ID (UUID)
+     * @return ResponseEntity with GetPlaylistResponseDTO containing complete playlist
+     * @throws ResourceNotFoundException if room doesn't exist
+     * @throws UnauthorizedRoomAccessException if user is not a room member
+     */
+    @GetMapping("/playlist")
+    public ResponseEntity<GetPlaylistResponseDTO> getPlaylist(@PathVariable UUID roomId) {
+        LOG.debug("REST request to get playlist for room {}", roomId);
+
+        // Get authenticated user ID from JWT
+        UUID userId = getCurrentUserId();
+        LOG.debug("User {} requesting playlist for room {}", userId, roomId);
+
+        // Delegate to service layer
+        GetPlaylistResponseDTO response = playlistService.getPlaylist(roomId, userId);
+
+        LOG.info("Returning playlist with {} items for room {}", response.getTotalCount(), roomId);
+
+        return ResponseEntity.ok(response);
     }
 
     /**
