@@ -134,44 +134,148 @@ com.partywave
 
 ### 2.1 User Authentication & Registration
 
-**Feature**: Users authenticate via Spotify OAuth and are automatically registered on first login.
+**Feature**: Users authenticate via Spotify OAuth with PKCE (Proof Key for Code Exchange) and are automatically registered on first login.
+
+**PKCE Flow Overview**:
+
+PartyWave uses **PKCE (RFC 7636)** for enhanced OAuth security. The flow consists of two phases:
+
+1. **Authorization Phase**: Frontend generates code verifier/challenge, backend stores challenge, user authenticates with Spotify
+2. **Token Exchange Phase**: Backend creates temporary authorization code, frontend exchanges it for JWT tokens using code verifier
 
 **Workflow**:
 
-1. User clicks "Login with Spotify" on the frontend.
-2. Frontend sends request to backend API (e.g., `GET /auth/spotify/login`).
-3. Backend constructs Spotify authorization URL with `client_id`, `redirect_uri`, `scope`, and `state` (for CSRF protection), then redirects user to Spotify OAuth authorization endpoint (`https://accounts.spotify.com/authorize`).
-4. User grants permissions to PartyWave on Spotify's authorization page.
-5. Spotify redirects back to backend callback endpoint (e.g., `GET /auth/spotify/callback?code=AUTH_CODE&state=STATE`) with authorization code.
-6. Backend validates `state` parameter (CSRF protection), then exchanges authorization code for access token and refresh token via Spotify Token API (`POST https://accounts.spotify.com/api/token`).
-7. Backend fetches user profile from Spotify API (`GET /v1/me` endpoint) using the access token.
-8. Backend checks if `app_user` exists with matching `spotify_user_id`:
-   - **If exists**: Update `last_active_at`, return user data.
-   - **If not exists**: Create new `app_user` record with:
-     - `spotify_user_id` (from Spotify)
-     - `display_name` (from Spotify profile)
-     - `email` (from Spotify profile)
-     - `country`, `href`, `url`, `type` (from Spotify profile)
-     - `app_user_images` (from Spotify profile images)
-     - Initialize `app_user_stats` with `total_like = 0`, `total_dislike = 0`
-     - Set `status = ONLINE`
-9. Backend stores Spotify access/refresh tokens securely in `user_tokens` table:
-   - Create or update `user_tokens` record with:
-     - `app_user_id` = user ID
-     - `access_token` = Spotify access token (encrypted at rest)
-     - `refresh_token` = Spotify refresh token (encrypted at rest)
-     - `token_type` = `Bearer`
-     - `expires_at` = token expiration time (from Spotify response)
-     - `scope` = granted OAuth scopes
-10. Backend generates PartyWave JWT tokens:
-    - Generate JWT access token (15 min expiration) with user claims (see `AUTHENTICATION.md` section 2.1)
-    - Generate JWT refresh token (7 days expiration)
-    - Store refresh token hash in database (if refresh token storage implemented)
-11. Backend redirects to frontend with JWT tokens in URL hash fragment:
-    - Redirect to: `{frontend-url}/auth/callback#access_token={JWT_ACCESS_TOKEN}&refresh_token={JWT_REFRESH_TOKEN}&token_type=Bearer&expires_in=900&user_id={USER_ID}`
+#### Phase 1: Authorization Request
+
+1. **Frontend generates PKCE parameters**:
+
+   - Generate random `code_verifier` (43-128 characters, URL-safe)
+   - Compute `code_challenge` = Base64URL(SHA256(code_verifier))
+   - Store `code_verifier` securely (in memory, not localStorage)
+
+2. **Frontend initiates login**:
+
+   - Send request to backend: `GET /api/auth/spotify/login?code_challenge={CODE_CHALLENGE}&code_challenge_method=S256`
+   - Backend endpoint: `/api/auth/spotify/login`
+
+3. **Backend processes login request**:
+
+   - Validates `code_challenge_method` (must be "S256" if provided)
+   - Generates random `state` parameter for CSRF protection
+   - Stores `code_challenge` in Redis with key `partywave:pkce:state:{state}` (TTL: 10 minutes)
+   - Stores `state` in memory for validation
+
+4. **Backend redirects to Spotify**:
+
+   - Constructs Spotify authorization URL: `https://accounts.spotify.com/authorize?client_id={CLIENT_ID}&response_type=code&redirect_uri={REDIRECT_URI}&scope={SCOPE}&state={STATE}`
+   - Redirects user to Spotify authorization page
+
+5. **User grants permissions**:
+   - User authenticates with Spotify and grants permissions to PartyWave
+
+#### Phase 2: OAuth Callback & User Registration
+
+6. **Spotify redirects to backend callback**:
+
+   - Spotify redirects to: `GET /api/auth/spotify/callback?code={SPOTIFY_AUTH_CODE}&state={STATE}`
+   - Backend endpoint: `/api/auth/spotify/callback`
+
+7. **Backend validates callback**:
+
+   - Validates `state` parameter (CSRF protection)
+   - Retrieves `code_challenge` from Redis using `state` (if PKCE was used)
+   - Removes `state` from memory store
+
+8. **Backend exchanges code for Spotify tokens**:
+
+   - Exchanges authorization code for access token and refresh token via Spotify Token API (`POST https://accounts.spotify.com/api/token`)
+   - Receives Spotify access token, refresh token, expiration time, and scopes
+
+9. **Backend fetches user profile**:
+
+   - Fetches user profile from Spotify API (`GET /v1/me` endpoint) using the access token
+
+10. **Backend creates/updates user**:
+
+    - Checks if `app_user` exists with matching `spotify_user_id`:
+      - **If exists**: Update `last_active_at`, return user data
+      - **If not exists**: Create new `app_user` record with:
+        - `spotify_user_id` (from Spotify)
+        - `display_name` (from Spotify profile)
+        - `email` (from Spotify profile)
+        - `country`, `href`, `url`, `type` (from Spotify profile)
+        - `app_user_images` (from Spotify profile images)
+        - Initialize `app_user_stats` with `total_like = 0`, `total_dislike = 0`
+        - Set `status = ONLINE`
+
+11. **Backend stores Spotify tokens**:
+    - Create or update `user_tokens` record with:
+      - `app_user_id` = user ID
+      - `access_token` = Spotify access token (encrypted at rest)
+      - `refresh_token` = Spotify refresh token (encrypted at rest)
+      - `token_type` = `Bearer`
+      - `expires_at` = token expiration time (from Spotify response)
+      - `scope` = granted OAuth scopes
+
+#### Phase 3: PKCE Authorization Code Generation
+
+12. **Backend generates temporary authorization code** (PKCE flow):
+
+    - Generates cryptographically secure authorization code (32 bytes, Base64URL encoded)
+    - Stores authorization code in Redis with key `partywave:pkce:authcode:{authCode}` containing:
+      - `userId`: User UUID
+      - `codeChallenge`: Original code challenge from step 3
+    - Sets TTL: 5 minutes (authorization code expires quickly)
+    - Cleans up code challenge from Redis (deletes `partywave:pkce:state:{state}`)
+
+13. **Backend redirects to frontend with authorization code**:
+    - Redirects to: `{frontend-url}/pkce-test.html#authorization_code={AUTH_CODE}&expires_in=300`
     - Hash fragment is secure (not sent to server, not stored in browser history)
-    - Frontend JavaScript extracts tokens from hash fragment and stores them securely (in memory or httpOnly cookies)
-    - Frontend URL is configured via `spotify.frontend-url` property (defaults to `http://localhost:9060` in dev)
+    - Frontend JavaScript extracts authorization code from hash fragment
+
+#### Phase 4: Token Exchange (PKCE)
+
+14. **Frontend exchanges authorization code for JWT tokens**:
+
+    - Frontend sends request to backend: `POST /api/auth/token`
+    - Request body:
+      ```json
+      {
+        "authorization_code": "{AUTH_CODE}",
+        "code_verifier": "{CODE_VERIFIER}"
+      }
+      ```
+    - Backend endpoint: `/api/auth/token`
+
+15. **Backend validates PKCE and generates JWT tokens**:
+
+    - Retrieves authorization code data from Redis (validates TTL and existence)
+    - Validates PKCE: Computes SHA256(code_verifier) and compares with stored `code_challenge`
+    - If validation fails: Deletes authorization code and returns error
+    - If validation succeeds:
+      - Loads user from database
+      - Generates PartyWave JWT tokens:
+        - JWT access token (15 min expiration) with user claims (see `AUTHENTICATION.md` section 2.1)
+        - JWT refresh token (7 days expiration)
+        - Stores refresh token hash in database (if refresh token storage implemented)
+      - Deletes authorization code from Redis (single-use, prevents replay attacks)
+      - Returns JWT tokens to frontend
+
+16. **Frontend stores JWT tokens**:
+    - Frontend receives JWT tokens in response
+    - Stores access token securely (in memory, preferred) or httpOnly cookie
+    - Stores refresh token in httpOnly cookie (more secure than memory)
+    - Uses access token for all subsequent API requests
+
+**Legacy Flow (Backward Compatibility)**:
+
+If PKCE is not used (no `code_challenge` parameter in login request):
+
+- Steps 1-11 remain the same
+- Step 12: Backend generates JWT tokens immediately (no authorization code)
+- Step 13: Backend redirects to frontend with JWT tokens in hash fragment:
+  - `{frontend-url}/pkce-test.html#access_token={JWT_ACCESS_TOKEN}&refresh_token={JWT_REFRESH_TOKEN}&token_type=Bearer&expires_in=900&user_id={USER_ID}`
+- Steps 14-16 are skipped
 
 **Database Impact**:
 
@@ -182,13 +286,20 @@ com.partywave
 
 **AI Agent Notes**:
 
-- **Backend handles OAuth flow**: Frontend should NOT directly redirect to Spotify. Instead, frontend calls backend API (e.g., `/auth/spotify/login`), and backend constructs and redirects to Spotify authorization URL. This keeps `client_secret` secure on backend.
-- **Callback endpoint**: Spotify redirects to backend callback endpoint (e.g., `/auth/spotify/callback`) with authorization code. Backend validates `state` parameter for CSRF protection.
-- **Token delivery**: After successful authentication, backend redirects to frontend URL (configured via `spotify.frontend-url`) with JWT tokens in URL hash fragment. Hash fragment provides secure token transmission (not sent to server, not stored in browser history). Frontend must extract tokens from hash and store them securely.
+- **PKCE Implementation**: PartyWave uses PKCE (RFC 7636) for enhanced OAuth security. PKCE prevents authorization code interception attacks by requiring clients to prove they initiated the authorization request.
+- **Code Challenge Storage**: Code challenges are stored in Redis with TTL (10 minutes) and associated with OAuth `state` parameter. Key format: `partywave:pkce:state:{state}`.
+- **Authorization Code Storage**: Temporary authorization codes are stored in Redis with TTL (5 minutes) and contain user ID and code challenge. Key format: `partywave:pkce:authcode:{authCode}`. Codes are single-use and deleted after successful exchange.
+- **PKCE Validation**: Code verifier validation uses SHA-256 hashing. Backend computes `Base64URL(SHA256(code_verifier))` and compares with stored `code_challenge`.
+- **Backend handles OAuth flow**: Frontend should NOT directly redirect to Spotify. Instead, frontend calls backend API (`/api/auth/spotify/login`), and backend constructs and redirects to Spotify authorization URL. This keeps `client_secret` secure on backend.
+- **Callback endpoint**: Spotify redirects to backend callback endpoint (`/api/auth/spotify/callback`) with authorization code. Backend validates `state` parameter for CSRF protection.
+- **Token delivery (PKCE flow)**: After successful authentication, backend redirects to frontend URL (configured via `spotify.frontend-url`) with temporary authorization code in URL hash fragment. Frontend must exchange this code for JWT tokens using code verifier.
+- **Token delivery (Legacy flow)**: If PKCE is not used, backend redirects with JWT tokens directly in hash fragment. Hash fragment provides secure token transmission (not sent to server, not stored in browser history).
+- **Frontend PKCE requirements**: Frontend must generate code verifier/challenge, store verifier securely (in memory), and provide verifier during token exchange. Code verifier should be 43-128 characters, URL-safe.
 - Use Spotify User API endpoints (see `SPOTIFY_AUTH_ENDPOINTS.md`).
 - Store Spotify access/refresh tokens securely in `user_tokens` table (see `POSTGRES_SCHEMA.md`). Tokens should be encrypted at rest.
 - Handle token refresh automatically before API calls: Check `user_tokens.expires_at` before making Spotify API requests. If expired, use `refresh_token` to obtain a new access token via Spotify Token API, then update `user_tokens` record.
-- **JWT Authentication**: After Spotify OAuth, backend must generate PartyWave JWT tokens for application-level authentication. All API requests and WebSocket connections require JWT authentication. See `AUTHENTICATION.md` for detailed JWT and WebSocket authentication specifications.
+- **JWT Authentication**: After token exchange, backend generates PartyWave JWT tokens for application-level authentication. All API requests and WebSocket connections require JWT authentication. See `AUTHENTICATION.md` for detailed JWT and WebSocket authentication specifications.
+- **Redis TTL Management**: Code challenges expire after 10 minutes, authorization codes expire after 5 minutes. Failed validations should delete codes immediately to prevent replay attacks.
 
 ---
 
