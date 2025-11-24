@@ -1,5 +1,6 @@
 package com.partywave.backend.repository;
 
+import com.partywave.backend.domain.AppUser;
 import com.partywave.backend.domain.AppUserImage;
 import java.util.List;
 import java.util.Optional;
@@ -38,4 +39,12 @@ public interface AppUserImageRepository extends JpaRepository<AppUserImage, UUID
 
     @Query("select appUserImage from AppUserImage appUserImage left join fetch appUserImage.appUser where appUserImage.id =:id")
     Optional<AppUserImage> findOneWithToOneRelationships(@Param("id") UUID id);
+
+    /**
+     * Find all AppUserImages for a specific AppUser.
+     *
+     * @param appUser AppUser entity
+     * @return List of AppUserImage entities
+     */
+    List<AppUserImage> findByAppUser(AppUser appUser);
 }

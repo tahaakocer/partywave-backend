@@ -6,14 +6,19 @@ import com.partywave.backend.domain.AppUserImage;
 import com.partywave.backend.domain.AppUserStats;
 import com.partywave.backend.domain.UserToken;
 import com.partywave.backend.domain.enumeration.AppUserStatus;
+import com.partywave.backend.exception.ResourceNotFoundException;
+import com.partywave.backend.exception.SpotifyApiException;
 import com.partywave.backend.exception.TokenEncryptionException;
 import com.partywave.backend.repository.AppUserImageRepository;
 import com.partywave.backend.repository.AppUserRepository;
 import com.partywave.backend.repository.AppUserStatsRepository;
 import com.partywave.backend.repository.UserTokenRepository;
 import com.partywave.backend.security.TokenEncryptionService;
+import com.partywave.backend.service.dto.UpdateUserProfileRequestDTO;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -34,19 +39,25 @@ public class AppUserService {
     private final AppUserStatsRepository appUserStatsRepository;
     private final AppUserImageRepository appUserImageRepository;
     private final TokenEncryptionService tokenEncryptionService;
+    private final SpotifyAuthService spotifyAuthService;
+    private final TokenRefreshService tokenRefreshService;
 
     public AppUserService(
         AppUserRepository appUserRepository,
         UserTokenRepository userTokenRepository,
         AppUserStatsRepository appUserStatsRepository,
         AppUserImageRepository appUserImageRepository,
-        TokenEncryptionService tokenEncryptionService
+        TokenEncryptionService tokenEncryptionService,
+        SpotifyAuthService spotifyAuthService,
+        TokenRefreshService tokenRefreshService
     ) {
         this.appUserRepository = appUserRepository;
         this.userTokenRepository = userTokenRepository;
         this.appUserStatsRepository = appUserStatsRepository;
         this.appUserImageRepository = appUserImageRepository;
         this.tokenEncryptionService = tokenEncryptionService;
+        this.spotifyAuthService = spotifyAuthService;
+        this.tokenRefreshService = tokenRefreshService;
     }
 
     /**
@@ -262,6 +273,92 @@ public class AppUserService {
             }
         } catch (Exception e) {
             LOG.warn("Failed to update last active for user {}: {}", userId, e.getMessage());
+        }
+    }
+
+    /**
+     * Get user profile by ID.
+     * Returns AppUser with stats and images eagerly fetched.
+     *
+     * @param userId User ID
+     * @return AppUser entity with stats and images
+     * @throws ResourceNotFoundException if user not found
+     */
+    @Transactional(readOnly = true)
+    public AppUser getUserProfile(UUID userId) {
+        LOG.debug("Getting user profile for user ID: {}", userId);
+        return appUserRepository.findByIdWithStatsAndImages(userId).orElseThrow(() -> new ResourceNotFoundException("User", "id", userId));
+    }
+
+    /**
+     * Update user profile.
+     * Updates display_name and optionally syncs images from Spotify.
+     *
+     * @param userId User ID
+     * @param request Update request DTO
+     * @return Updated AppUser entity
+     * @throws ResourceNotFoundException if user not found
+     * @throws SpotifyApiException if Spotify API call fails (when syncing images)
+     */
+    public AppUser updateProfile(UUID userId, UpdateUserProfileRequestDTO request) {
+        LOG.debug("Updating profile for user ID: {}", userId);
+
+        // Find user
+        AppUser appUser = appUserRepository.findById(userId).orElseThrow(() -> new ResourceNotFoundException("User", "id", userId));
+
+        // Update display_name if provided
+        if (request.getDisplayName() != null && !request.getDisplayName().trim().isEmpty()) {
+            appUser.setDisplayName(request.getDisplayName().trim());
+            LOG.debug("Updated display_name for user {}: {}", userId, appUser.getDisplayName());
+        }
+
+        // Sync images from Spotify if requested
+        if (Boolean.TRUE.equals(request.getSyncImagesFromSpotify())) {
+            LOG.debug("Syncing images from Spotify for user: {}", userId);
+            syncImagesFromSpotify(appUser);
+        }
+
+        // Update last active timestamp
+        appUser.setLastActiveAt(Instant.now());
+
+        // Save user
+        appUser = appUserRepository.save(appUser);
+
+        LOG.debug("Successfully updated profile for user: {}", userId);
+        return appUser;
+    }
+
+    /**
+     * Sync user images from Spotify profile.
+     * Deletes existing images and creates new ones from Spotify.
+     *
+     * @param appUser AppUser entity
+     * @throws SpotifyApiException if Spotify API call fails
+     */
+    private void syncImagesFromSpotify(AppUser appUser) {
+        try {
+            // Get valid access token
+            String accessToken = tokenRefreshService.getValidAccessToken(appUser.getId());
+
+            // Fetch Spotify profile
+            JsonNode spotifyProfile = spotifyAuthService.fetchUserProfile(accessToken);
+
+            // Delete existing images
+            List<AppUserImage> existingImages = appUserImageRepository.findByAppUser(appUser);
+            if (existingImages != null && !existingImages.isEmpty()) {
+                appUserImageRepository.deleteAll(existingImages);
+                LOG.debug("Deleted {} existing images for user: {}", existingImages.size(), appUser.getId());
+            }
+
+            // Create new images from Spotify profile
+            createAppUserImages(appUser, spotifyProfile);
+            LOG.debug("Successfully synced images from Spotify for user: {}", appUser.getId());
+        } catch (SpotifyApiException e) {
+            LOG.error("Failed to sync images from Spotify for user {}: {}", appUser.getId(), e.getMessage(), e);
+            throw e;
+        } catch (Exception e) {
+            LOG.error("Unexpected error syncing images from Spotify for user {}: {}", appUser.getId(), e.getMessage(), e);
+            throw new SpotifyApiException("Failed to sync images from Spotify: " + e.getMessage(), "image_sync", e);
         }
     }
 }

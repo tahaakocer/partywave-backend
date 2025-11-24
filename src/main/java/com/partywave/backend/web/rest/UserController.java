@@ -2,31 +2,55 @@ package com.partywave.backend.web.rest;
 
 import com.partywave.backend.domain.AppUser;
 import com.partywave.backend.exception.ResourceNotFoundException;
-import com.partywave.backend.repository.AppUserRepository;
 import com.partywave.backend.security.SecurityUtils;
+import com.partywave.backend.service.AppUserService;
 import com.partywave.backend.service.dto.AppUserDTO;
+import com.partywave.backend.service.dto.UpdateUserProfileRequestDTO;
+import jakarta.validation.Valid;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 /**
  * REST controller for managing user profiles.
- * Provides endpoints for retrieving authenticated user information.
+ * Provides endpoints for retrieving and updating user information.
  */
+
 @RestController
 @RequestMapping("/api/users")
 public class UserController {
 
     private static final Logger LOG = LoggerFactory.getLogger(UserController.class);
 
-    private final AppUserRepository appUserRepository;
+    private final AppUserService appUserService;
 
-    public UserController(AppUserRepository appUserRepository) {
-        this.appUserRepository = appUserRepository;
+    public UserController(AppUserService appUserService) {
+        this.appUserService = appUserService;
+    }
+
+    /**
+     * GET /api/users/{userId} : Get user profile by ID
+     *
+     * Returns detailed information about a user, including profile data, statistics, and images.
+     * Based on PROJECT_OVERVIEW.md section 2.13 - User Profile Viewing & Statistics.
+     *
+     * @param userId User ID
+     * @return ResponseEntity with user profile
+     */
+    @GetMapping("/{userId}")
+    public ResponseEntity<AppUserDTO> getUserProfile(@PathVariable UUID userId) {
+        LOG.debug("REST request to get user profile: {}", userId);
+
+        // Get user profile using service
+        AppUser appUser = appUserService.getUserProfile(userId);
+
+        // Convert to DTO
+        AppUserDTO userDTO = convertToDTO(appUser);
+
+        LOG.debug("Successfully retrieved user profile: {}", userId);
+        return ResponseEntity.ok(userDTO);
     }
 
     /**
@@ -45,15 +69,42 @@ public class UserController {
         UUID userId = SecurityUtils.getCurrentUserId()
             .orElseThrow(() -> new ResourceNotFoundException("User", "authentication", "No authenticated user found"));
 
-        // Load user with stats and images eagerly fetched to avoid lazy loading issues
-        AppUser appUser = appUserRepository
-            .findByIdWithStatsAndImages(userId)
-            .orElseThrow(() -> new ResourceNotFoundException("User", "id", userId));
+        // Get user profile using service
+        AppUser appUser = appUserService.getUserProfile(userId);
 
         // Convert to DTO
         AppUserDTO userDTO = convertToDTO(appUser);
 
         LOG.debug("Successfully retrieved current user profile: {}", userId);
+        return ResponseEntity.ok(userDTO);
+    }
+
+    /**
+     * PUT /api/users/me : Update current authenticated user's profile
+     *
+     * Updates the display_name and optionally syncs images from Spotify.
+     *
+     * @param request Update request DTO
+     * @return ResponseEntity with updated user profile
+     */
+    @PutMapping("/me")
+    public ResponseEntity<AppUserDTO> updateCurrentUser(@Valid @RequestBody UpdateUserProfileRequestDTO request) {
+        LOG.debug("REST request to update current user profile");
+
+        // Extract user ID from JWT token
+        UUID userId = SecurityUtils.getCurrentUserId()
+            .orElseThrow(() -> new ResourceNotFoundException("User", "authentication", "No authenticated user found"));
+
+        // Update profile using service
+        AppUser appUser = appUserService.updateProfile(userId, request);
+
+        // Reload with stats and images to ensure we have the latest data
+        appUser = appUserService.getUserProfile(userId);
+
+        // Convert to DTO
+        AppUserDTO userDTO = convertToDTO(appUser);
+
+        LOG.debug("Successfully updated current user profile: {}", userId);
         return ResponseEntity.ok(userDTO);
     }
 
