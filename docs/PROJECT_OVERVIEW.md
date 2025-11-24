@@ -167,7 +167,11 @@ com.partywave
     - Generate JWT access token (15 min expiration) with user claims (see `AUTHENTICATION.md` section 2.1)
     - Generate JWT refresh token (7 days expiration)
     - Store refresh token hash in database (if refresh token storage implemented)
-11. Backend returns user data and JWT tokens to frontend (via redirect to frontend with token, or API response, or httpOnly cookies).
+11. Backend redirects to frontend with JWT tokens in URL hash fragment:
+    - Redirect to: `{frontend-url}/auth/callback#access_token={JWT_ACCESS_TOKEN}&refresh_token={JWT_REFRESH_TOKEN}&token_type=Bearer&expires_in=900&user_id={USER_ID}`
+    - Hash fragment is secure (not sent to server, not stored in browser history)
+    - Frontend JavaScript extracts tokens from hash fragment and stores them securely (in memory or httpOnly cookies)
+    - Frontend URL is configured via `spotify.frontend-url` property (defaults to `http://localhost:9060` in dev)
 
 **Database Impact**:
 
@@ -180,6 +184,7 @@ com.partywave
 
 - **Backend handles OAuth flow**: Frontend should NOT directly redirect to Spotify. Instead, frontend calls backend API (e.g., `/auth/spotify/login`), and backend constructs and redirects to Spotify authorization URL. This keeps `client_secret` secure on backend.
 - **Callback endpoint**: Spotify redirects to backend callback endpoint (e.g., `/auth/spotify/callback`) with authorization code. Backend validates `state` parameter for CSRF protection.
+- **Token delivery**: After successful authentication, backend redirects to frontend URL (configured via `spotify.frontend-url`) with JWT tokens in URL hash fragment. Hash fragment provides secure token transmission (not sent to server, not stored in browser history). Frontend must extract tokens from hash and store them securely.
 - Use Spotify User API endpoints (see `SPOTIFY_AUTH_ENDPOINTS.md`).
 - Store Spotify access/refresh tokens securely in `user_tokens` table (see `POSTGRES_SCHEMA.md`). Tokens should be encrypted at rest.
 - Handle token refresh automatically before API calls: Check `user_tokens.expires_at` before making Spotify API requests. If expired, use `refresh_token` to obtain a new access token via Spotify Token API, then update `user_tokens` record.
