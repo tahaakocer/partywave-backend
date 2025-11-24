@@ -119,8 +119,10 @@ public class CacheConfiguration {
         template.setValueSerializer(valueSerializer);
         template.setHashValueSerializer(valueSerializer);
 
-        // Enable transaction support
-        template.setEnableTransactionSupport(true);
+        // Disable transaction support for Redis operations
+        // Redis operations should be independent of PostgreSQL transactions
+        // Transaction support can cause issues with INCR and other atomic operations
+        template.setEnableTransactionSupport(false);
 
         template.afterPropertiesSet();
         return template;

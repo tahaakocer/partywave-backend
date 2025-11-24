@@ -100,11 +100,22 @@ public class PlaylistRedisService {
      * Uses Redis INCR for atomic increment.
      *
      * @param roomId Room UUID
-     * @return Next sequence number (starts at 1)
+     * @return Next sequence number (starts at 1), or null if Redis operation fails
      */
     public Long getNextSequenceNumber(String roomId) {
-        String counterKey = buildSequenceCounterKey(roomId);
-        return redisTemplate.opsForValue().increment(counterKey);
+        try {
+            String counterKey = buildSequenceCounterKey(roomId);
+            Long result = redisTemplate.opsForValue().increment(counterKey);
+            if (result == null) {
+                log.error("Redis INCR returned null for key: {}", counterKey);
+            } else {
+                log.debug("Generated sequence number {} for room {}", result, roomId);
+            }
+            return result;
+        } catch (Exception e) {
+            log.error("Failed to generate sequence number for room {}: {}", roomId, e.getMessage(), e);
+            return null;
+        }
     }
 
     /**

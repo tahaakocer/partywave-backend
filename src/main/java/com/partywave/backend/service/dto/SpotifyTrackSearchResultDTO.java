@@ -1,5 +1,6 @@
 package com.partywave.backend.service.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;
 
 /**
@@ -82,11 +83,20 @@ public class SpotifyTrackSearchResultDTO {
         private String id;
         private String name;
         private String uri;
+
+        @JsonProperty("duration_ms")
         private Integer durationMs;
+
         private Boolean explicit;
+
+        @JsonProperty("preview_url")
         private String previewUrl;
+
         private Integer popularity;
+
+        @JsonProperty("track_number")
         private Integer trackNumber;
+
         private List<ArtistDTO> artists;
         private AlbumDTO album;
 
@@ -209,8 +219,13 @@ public class SpotifyTrackSearchResultDTO {
         private String id;
         private String name;
         private String uri;
+
+        @JsonProperty("album_type")
         private String albumType;
+
+        @JsonProperty("release_date")
         private String releaseDate;
+
         private List<ImageDTO> images;
 
         // Getters and Setters

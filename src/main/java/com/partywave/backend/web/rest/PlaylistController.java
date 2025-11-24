@@ -4,14 +4,19 @@ import com.partywave.backend.exception.ResourceNotFoundException;
 import com.partywave.backend.exception.UnauthorizedRoomAccessException;
 import com.partywave.backend.repository.RoomMemberRepository;
 import com.partywave.backend.repository.RoomRepository;
+import com.partywave.backend.service.PlaylistService;
 import com.partywave.backend.service.SpotifyApiClient;
+import com.partywave.backend.service.dto.AddTrackRequestDTO;
+import com.partywave.backend.service.dto.AddTrackResponseDTO;
 import com.partywave.backend.service.dto.SpotifyTrackSearchResultDTO;
 import com.partywave.backend.service.dto.TrackSearchResponseDTO;
+import jakarta.validation.Valid;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -25,7 +30,7 @@ import org.springframework.web.bind.annotation.*;
  * Based on PROJECT_OVERVIEW.md section 2.6 - Adding Tracks to Playlist.
  */
 @RestController
-@RequestMapping("/api/rooms/{roomId}/tracks")
+@RequestMapping("/api/rooms/{roomId}")
 public class PlaylistController {
 
     private static final Logger LOG = LoggerFactory.getLogger(PlaylistController.class);
@@ -33,11 +38,65 @@ public class PlaylistController {
     private final SpotifyApiClient spotifyApiClient;
     private final RoomRepository roomRepository;
     private final RoomMemberRepository roomMemberRepository;
+    private final PlaylistService playlistService;
 
-    public PlaylistController(SpotifyApiClient spotifyApiClient, RoomRepository roomRepository, RoomMemberRepository roomMemberRepository) {
+    public PlaylistController(
+        SpotifyApiClient spotifyApiClient,
+        RoomRepository roomRepository,
+        RoomMemberRepository roomMemberRepository,
+        PlaylistService playlistService
+    ) {
         this.spotifyApiClient = spotifyApiClient;
         this.roomRepository = roomRepository;
         this.roomMemberRepository = roomMemberRepository;
+        this.playlistService = playlistService;
+    }
+
+    /**
+     * POST /api/rooms/{roomId}/playlist : Add a track to the room's playlist
+     *
+     * Adds a track to the room's playlist (always appended to the end).
+     * User must be an active member of the room to add tracks.
+     *
+     * Workflow (based on PROJECT_OVERVIEW.md section 2.6):
+     * 1. Validates user is a room member
+     * 2. Generates UUID for playlist item
+     * 3. Gets next sequence number (Redis INCR counter)
+     * 4. Creates playlist item hash in Redis (status=QUEUED)
+     * 5. RPUSH to playlist list
+     * 6. If playlist is empty and no track is playing, auto-starts the first track
+     * 7. TODO: Emits WebSocket event PLAYLIST_ITEM_ADDED
+     *
+     * @param roomId Room ID (UUID)
+     * @param request AddTrackRequestDTO containing track metadata (source_id, source_uri, name, artist, album, duration_ms)
+     * @return ResponseEntity with AddTrackResponseDTO containing created playlist item details
+     * @throws ResourceNotFoundException if room doesn't exist
+     * @throws UnauthorizedRoomAccessException if user is not a room member
+     */
+    @PostMapping("/playlist")
+    public ResponseEntity<AddTrackResponseDTO> addTrackToPlaylist(
+        @PathVariable UUID roomId,
+        @Valid @RequestBody AddTrackRequestDTO request
+    ) {
+        LOG.debug("REST request to add track to room {}: {}", roomId, request);
+
+        // Get authenticated user ID from JWT
+        UUID userId = getCurrentUserId();
+        LOG.debug("User {} adding track to room {}", userId, roomId);
+
+        // Delegate to service layer
+        AddTrackResponseDTO response = playlistService.addTrack(roomId, userId, request);
+
+        LOG.info(
+            "Track added to room {} playlist: {} (item: {}, sequence: {}, auto-started: {})",
+            roomId,
+            response.getName(),
+            response.getPlaylistItemId(),
+            response.getSequenceNumber(),
+            response.isAutoStarted()
+        );
+
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
     /**
@@ -59,7 +118,7 @@ public class PlaylistController {
      * @throws ResourceNotFoundException if room doesn't exist
      * @throws UnauthorizedRoomAccessException if user is not a room member
      */
-    @GetMapping("/search")
+    @GetMapping("/tracks/search")
     public ResponseEntity<TrackSearchResponseDTO> searchTracks(
         @PathVariable UUID roomId,
         @RequestParam("q") String query,
