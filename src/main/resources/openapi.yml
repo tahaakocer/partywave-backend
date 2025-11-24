@@ -5,11 +5,22 @@ info:
     PartyWave API documentation for Spotify OAuth2 authentication and JWT token management.
 
     ## Authentication Flow
+
+    **Standard Flow (without PKCE):**
     1. Initiate login via `/api/auth/spotify/login`
     2. User authorizes on Spotify
     3. Spotify redirects to `/api/auth/spotify/callback` with authorization code
-    4. Backend exchanges code for tokens and generates PartyWave JWT tokens
+    4. Backend exchanges code for tokens and generates PartyWave JWT tokens immediately
     5. Use refresh token endpoint to get new tokens when access token expires
+
+    **PKCE Flow (recommended for enhanced security):**
+    1. Generate code verifier (random string) and code challenge (SHA-256 hash)
+    2. Initiate login via `/api/auth/spotify/login?codeChallenge={challenge}&codeChallengeMethod=S256`
+    3. User authorizes on Spotify
+    4. Spotify redirects to `/api/auth/spotify/callback` with authorization code
+    5. Backend returns temporary authorization code (not JWT tokens)
+    6. Exchange authorization code for JWT tokens via `/api/auth/token` with code verifier
+    7. Use refresh token endpoint to get new tokens when access token expires
 
     ## JWT Token Refresh
     - Access tokens expire in 15 minutes
@@ -35,8 +46,20 @@ tags:
     description: API endpoints for user authentication and authorization
   - name: Account
     description: API endpoints for user account information
+  - name: Users
+    description: API endpoints for user profile management
   - name: Rooms
-    description: API endpoints for room management (create, retrieve, join)
+    description: API endpoints for room management (create, retrieve, join, leave)
+  - name: Chat
+    description: API endpoints for chat messaging in rooms
+  - name: Playlist
+    description: API endpoints for playlist management (search, add tracks, get playlist)
+  - name: Playback
+    description: API endpoints for playback control (skip, get state)
+  - name: Votes
+    description: API endpoints for vote-based operations (skip track, kick user)
+  - name: Likes
+    description: API endpoints for like/dislike operations on playlist items
 
 paths:
   /api/auth/spotify/login:
@@ -47,7 +70,22 @@ paths:
       description: |
         Redirects the user to Spotify's authorization page.
         Generates a random state parameter for CSRF protection.
+        Optionally supports PKCE (Proof Key for Code Exchange) for enhanced security.
       operationId: spotifyLogin
+      parameters:
+        - name: codeChallenge
+          in: query
+          required: false
+          description: PKCE code challenge (base64url-encoded SHA-256 hash of code verifier)
+          schema:
+            type: string
+        - name: codeChallengeMethod
+          in: query
+          required: false
+          description: PKCE challenge method (must be "S256" if provided)
+          schema:
+            type: string
+            enum: [S256]
       responses:
         '302':
           description: Redirect to Spotify authorization URL
@@ -150,6 +188,36 @@ paths:
         '500':
           description: Internal server error
 
+  /api/auth/token:
+    post:
+      tags:
+        - Authentication
+      summary: Exchange authorization code for JWT tokens (PKCE)
+      description: |
+        Exchanges an authorization code for JWT tokens using PKCE flow.
+        This endpoint is used after the client receives an authorization code from the Spotify callback.
+        The client must provide the code verifier to prove they initiated the original authorization request.
+      operationId: exchangeToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenExchangeRequest'
+      responses:
+        '200':
+          description: Successfully exchanged authorization code for JWT tokens
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JwtTokenResponse'
+        '400':
+          description: Invalid request body or authorization code
+        '401':
+          description: Invalid or expired authorization code, or PKCE validation failed
+        '500':
+          description: Internal server error
+
   /api/auth/logout:
     post:
       tags:
@@ -241,7 +309,91 @@ paths:
         '500':
           description: Internal server error
 
+  /api/users/me:
+    get:
+      tags:
+        - Users
+      summary: Get current user profile
+      description: |
+        Returns detailed information about the currently authenticated user,
+        including profile data, statistics, and images.
+      operationId: getCurrentUser
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Successfully retrieved user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppUserDTO'
+        '401':
+          description: User is not authenticated
+        '404':
+          description: User not found
+        '500':
+          description: Internal server error
+
   /api/rooms:
+    get:
+      tags:
+        - Rooms
+      summary: Get public rooms with optional filtering
+      description: |
+        Returns a paginated list of public rooms with optional tag filtering and search.
+        Each room includes:
+        - Room metadata (name, description, tags, max_participants)
+        - Current member count (from PostgreSQL)
+        - Online member count (from Redis)
+      operationId: getPublicRooms
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: tags
+          in: query
+          required: false
+          description: 'Comma-separated list of tags to filter by (e.g., "lofi,90s")'
+          schema:
+            type: string
+        - name: search
+          in: query
+          required: false
+          description: 'Search term for name/description (e.g., "chill")'
+          schema:
+            type: string
+        - name: page
+          in: query
+          required: false
+          description: 'Page number (0-indexed, default: 0)'
+          schema:
+            type: integer
+            default: 0
+        - name: size
+          in: query
+          required: false
+          description: 'Page size (default: 20)'
+          schema:
+            type: integer
+            default: 20
+        - name: sort
+          in: query
+          required: false
+          description: 'Sort criteria (e.g., "createdAt,desc")'
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successfully retrieved public rooms
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RoomResponse'
+        '401':
+          description: User is not authenticated
+        '500':
+          description: Internal server error
     post:
       tags:
         - Rooms
@@ -319,6 +471,873 @@ paths:
           description: User is not authenticated
         '404':
           description: Room not found
+        '500':
+          description: Internal server error
+
+  /api/rooms/{roomId}/join:
+    post:
+      tags:
+        - Rooms
+      summary: Join a room
+      description: |
+        Allows an authenticated user to join a room.
+        - Public rooms: No invitation token required
+        - Private rooms: Requires either explicit RoomAccess grant or valid invitation token
+
+        **Validations:**
+        - Room must exist
+        - For private rooms: user must have access OR provide valid invitation token
+        - Room must not be full (current active members < max_participants)
+        - User must not already be an active member
+
+        **On success:**
+        - Creates or reactivates RoomMember record with PARTICIPANT role and is_active = true
+        - Adds user to Redis online members set
+        - If invitation token used, increments its used_count
+        - Returns complete room state including room details, playlist, playback state, and chat history
+      operationId: joinRoom
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          description: Room UUID
+          schema:
+            type: string
+            format: uuid
+        - name: invitation_token
+          in: query
+          required: false
+          description: Invitation token for private rooms
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successfully joined room
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomStateResponse'
+        '400':
+          description: Invalid request or validation failed
+        '401':
+          description: User is not authenticated
+        '403':
+          description: User cannot access private room
+        '404':
+          description: Room not found
+        '500':
+          description: Internal server error
+
+  /api/rooms/{roomId}/leave:
+    post:
+      tags:
+        - Rooms
+      summary: Leave a room
+      description: |
+        Allows an authenticated user to leave a room they are currently an active member of.
+
+        **On success:**
+        - Soft deletes RoomMember record (sets is_active = false, updates lastActiveAt)
+        - Removes user from Redis online members set
+        - If no online members remain, sets TTL (1 hour) for all room Redis keys
+      operationId: leaveRoom
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          description: Room UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Successfully left room
+        '401':
+          description: User is not authenticated
+        '404':
+          description: User is not an active member of the room
+        '500':
+          description: Internal server error
+
+  /api/rooms/{roomId}/chat:
+    post:
+      tags:
+        - Chat
+      summary: Send a chat message in a room
+      description: |
+        Allows room members to send chat messages in real-time.
+
+        **Requirements:**
+        - User must be authenticated
+        - User must be an active member of the room
+        - Message content must not be empty (max 1000 characters)
+        - Rate limiting: max 10 messages per minute per user per room
+
+        **Workflow:**
+        1. Validates user is a room member
+        2. Validates content is not empty (max 1000 characters)
+        3. Checks rate limiting (max 10 messages per minute)
+        4. Creates ChatMessage record in PostgreSQL
+        5. Emits WebSocket CHAT_MESSAGE event to all room members
+      operationId: sendChatMessage
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          description: Room UUID
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendChatMessageRequest'
+      responses:
+        '200':
+          description: Successfully sent chat message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatMessage'
+        '400':
+          description: Invalid request body or rate limit exceeded
+        '401':
+          description: User is not authenticated
+        '403':
+          description: User is not a room member
+        '404':
+          description: Room not found
+        '500':
+          description: Internal server error
+    get:
+      tags:
+        - Chat
+      summary: Get chat history for a room
+      description: |
+        Returns paginated chat messages ordered by sentAt descending (newest first).
+        Frontend can reverse the order to show oldest first.
+
+        **Requirements:**
+        - User must be authenticated
+        - User must be an active member of the room
+
+        **Query parameters:**
+        - page: Page number (0-indexed, default: 0)
+        - size: Page size (default: 50, max: 100)
+      operationId: getChatHistory
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          description: Room UUID
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          required: false
+          description: 'Page number (0-indexed, default: 0)'
+          schema:
+            type: integer
+            default: 0
+        - name: size
+          in: query
+          required: false
+          description: 'Page size (default: 50, max: 100)'
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+      responses:
+        '200':
+          description: Successfully retrieved chat history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ChatMessage'
+        '401':
+          description: User is not authenticated
+        '403':
+          description: User is not a room member
+        '404':
+          description: Room not found
+        '500':
+          description: Internal server error
+
+  /api/rooms/{roomId}/playlist:
+    post:
+      tags:
+        - Playlist
+      summary: Add a track to the room's playlist
+      description: |
+        Adds a track to the room's playlist (always appended to the end).
+        User must be an active member of the room to add tracks.
+
+        **Workflow:**
+        1. Validates user is a room member
+        2. Generates UUID for playlist item
+        3. Gets next sequence number (Redis INCR counter)
+        4. Creates playlist item hash in Redis (status=QUEUED)
+        5. RPUSH to playlist list
+        6. If playlist is empty and no track is playing, auto-starts the first track
+      operationId: addTrackToPlaylist
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          description: Room UUID
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddTrackRequest'
+      responses:
+        '201':
+          description: Successfully added track to playlist
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AddTrackResponse'
+        '400':
+          description: Invalid request body
+        '401':
+          description: User is not authenticated
+        '403':
+          description: User is not a room member
+        '404':
+          description: Room not found
+        '500':
+          description: Internal server error
+    get:
+      tags:
+        - Playlist
+      summary: Get the complete playlist for a room
+      description: |
+        Returns all playlist items (active + history) sorted by sequence number.
+        User must be an active member of the room to view the playlist.
+
+        **Includes:**
+        - QUEUED tracks (waiting to play)
+        - PLAYING track (currently playing)
+        - PLAYED tracks (finished playing)
+        - SKIPPED tracks (skipped by users)
+
+        **Each item includes:**
+        - Track metadata (name, artist, album, duration, image)
+        - Status and sequence number
+        - Like/dislike counts
+        - User who added the track
+      operationId: getPlaylist
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          description: Room UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Successfully retrieved playlist
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetPlaylistResponse'
+        '401':
+          description: User is not authenticated
+        '403':
+          description: User is not a room member
+        '404':
+          description: Room not found
+        '500':
+          description: Internal server error
+
+  /api/rooms/{roomId}/tracks/search:
+    get:
+      tags:
+        - Playlist
+      summary: Search for tracks to add to playlist
+      description: |
+        Searches Spotify for tracks based on the query parameter.
+        User must be an active member of the room to search.
+        Uses the user's Spotify access token for the search.
+
+        **Returns track metadata:**
+        - name, artist, album, duration
+        - source_uri, source_id
+        - album_image_url
+        - explicit flag
+      operationId: searchTracks
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          description: Room UUID
+          schema:
+            type: string
+            format: uuid
+        - name: q
+          in: query
+          required: true
+          description: Search query (song name, artist, album)
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          description: 'Number of results (default: 20, max: 50)'
+          schema:
+            type: integer
+            default: 20
+            maximum: 50
+        - name: offset
+          in: query
+          required: false
+          description: 'Offset for pagination (default: 0)'
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Successfully retrieved track search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackSearchResponse'
+        '400':
+          description: Invalid query parameter
+        '401':
+          description: User is not authenticated
+        '403':
+          description: User is not a room member
+        '404':
+          description: Room not found
+        '500':
+          description: Internal server error
+
+  /api/rooms/{roomId}/playback:
+    get:
+      tags:
+        - Playback
+      summary: Get current playback state
+      description: |
+        Returns the current playback state for a room, including:
+        - Current playlist item ID
+        - Playback timing information (started_at_ms, track_duration_ms, elapsed_ms)
+        - Full track metadata (name, artist, album, duration, source_uri, etc.)
+
+        **Clients can use this to:**
+        - Synchronize playback on join or reconnection
+        - Calculate elapsed time: elapsed_ms = now - started_at_ms
+        - Seek to correct position in Spotify player: player.seek(elapsed_ms)
+      operationId: getPlaybackState
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          description: Room UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Successfully retrieved playback state
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                description: Playback state with track metadata
+        '204':
+          description: No active playback in the room
+        '401':
+          description: User is not authenticated
+        '500':
+          description: Internal server error
+
+  /api/rooms/{roomId}/playback/skip:
+    post:
+      tags:
+        - Playback
+      summary: Manually skip current track
+      description: |
+        Allows OWNER or MODERATOR to manually skip the currently playing track.
+        This is different from vote-based skip.
+
+        **Requirements:**
+        - User must be authenticated
+        - User must be an active member of the room
+        - User must have OWNER or MODERATOR role
+        - A track must be currently playing
+
+        **On success:**
+        - Current track status is changed to SKIPPED
+        - Next QUEUED track is automatically started (if exists)
+        - If no more tracks, playback is stopped and playback hash is cleared
+      operationId: skipTrack
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          description: Room UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Successfully skipped track
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  nextPlaylistItemId:
+                    type: string
+        '400':
+          description: No track is playing or operation failed
+        '401':
+          description: User is not authenticated
+        '403':
+          description: User doesn't have OWNER or MODERATOR role
+        '404':
+          description: User is not an active member of the room
+        '500':
+          description: Internal server error
+
+  /api/rooms/{roomId}/votes/skip:
+    post:
+      tags:
+        - Votes
+      summary: Vote to skip current track
+      description: |
+        Allows room members to vote to skip the currently playing track.
+        When 50% threshold is reached, track is skipped automatically.
+
+        **Requirements:**
+        - User must be authenticated
+        - User must be an active member of the room
+        - A track must be currently playing
+        - User must not have already voted for this track
+
+        **Workflow:**
+        1. Validates user is a room member
+        2. Checks there is a track currently playing
+        3. Checks if user already voted for this track
+        4. Creates vote record in PostgreSQL
+        5. Counts votes for this track
+        6. Gets online member count from Redis
+        7. Checks threshold (50%)
+        8. If threshold reached, skips track automatically
+      operationId: voteSkipTrack
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          description: Room UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Successfully voted to skip track
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoteResponse'
+        '400':
+          description: No track is playing or user already voted
+        '401':
+          description: User is not authenticated
+        '403':
+          description: User is not a room member
+        '404':
+          description: Room not found
+        '500':
+          description: Internal server error
+    delete:
+      tags:
+        - Votes
+      summary: Withdraw skip track vote
+      description: |
+        Allows room members to withdraw their vote to skip the currently playing track.
+        User can change their mind and remove their vote before threshold is reached.
+
+        **Requirements:**
+        - User must be authenticated
+        - User must be an active member of the room
+        - A track must be currently playing
+        - User must have previously voted to skip this track
+      operationId: withdrawSkipVote
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          description: Room UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Successfully withdrew skip vote
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoteResponse'
+        '400':
+          description: No track is playing or user hasn't voted
+        '401':
+          description: User is not authenticated
+        '403':
+          description: User is not a room member
+        '404':
+          description: Room not found
+        '500':
+          description: Internal server error
+
+  /api/rooms/{roomId}/votes/kick:
+    post:
+      tags:
+        - Votes
+      summary: Vote to kick a user from the room
+      description: |
+        Allows room members to vote to kick another user from the room.
+        When 50% threshold is reached, user is kicked automatically.
+
+        **Requirements:**
+        - User must be authenticated
+        - User must be an active member of the room
+        - Target user must be an active member of the room
+        - User cannot vote to kick themselves
+        - Target user cannot be the room owner
+        - User must not have already voted to kick this target
+
+        **Workflow:**
+        1. Validates user is a room member
+        2. Validates target user is a room member
+        3. Validates user is not voting to kick themselves
+        4. Validates target user is not the room owner
+        5. Checks if user already voted to kick this target
+        6. Creates vote record
+        7. Counts votes for this target
+        8. Gets online member count
+        9. Checks threshold (50%)
+        10. If threshold reached, kicks user automatically
+      operationId: voteKickUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          description: Room UUID
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KickUserRequest'
+      responses:
+        '200':
+          description: Successfully voted to kick user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoteResponse'
+        '400':
+          description: Invalid request body or validation failed
+        '401':
+          description: User is not authenticated
+        '403':
+          description: User is not a room member
+        '404':
+          description: Room or target user not found
+        '500':
+          description: Internal server error
+    delete:
+      tags:
+        - Votes
+      summary: Withdraw kick user vote
+      description: |
+        Allows room members to withdraw their vote to kick a user from the room.
+        User can change their mind and remove their vote before threshold is reached.
+
+        **Requirements:**
+        - User must be authenticated
+        - User must be an active member of the room
+        - User must have previously voted to kick the target user
+      operationId: withdrawKickVote
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          description: Room UUID
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KickUserRequest'
+      responses:
+        '200':
+          description: Successfully withdrew kick vote
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoteResponse'
+        '400':
+          description: User hasn't voted to kick this target
+        '401':
+          description: User is not authenticated
+        '403':
+          description: User is not a room member
+        '404':
+          description: Room or target user not found
+        '500':
+          description: Internal server error
+
+  /api/rooms/{roomId}/votes:
+    get:
+      tags:
+        - Votes
+      summary: Get current vote status for the room
+      description: |
+        Returns current vote counts for:
+        - Skip track vote (if a track is currently playing)
+        - Kick user votes (for all users being voted to kick)
+
+        **Requirements:**
+        - User must be authenticated
+        - User must be an active member of the room
+      operationId: getVoteStatus
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          description: Room UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Successfully retrieved vote status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoteStatusResponse'
+        '401':
+          description: User is not authenticated
+        '403':
+          description: User is not a room member
+        '404':
+          description: Room not found
+        '500':
+          description: Internal server error
+
+  /api/rooms/{roomId}/playlist/{playlistItemId}/like:
+    post:
+      tags:
+        - Likes
+      summary: Like a playlist item
+      description: |
+        Adds a like to a playlist item. If user previously disliked, the dislike is removed.
+        Updates both Redis (runtime state) and PostgreSQL (persistent user statistics).
+      operationId: likeTrack
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          description: Room UUID
+          schema:
+            type: string
+            format: uuid
+        - name: playlistItemId
+          in: path
+          required: true
+          description: Playlist item UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Successfully liked playlist item
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LikeDislikeResponse'
+        '401':
+          description: User is not authenticated
+        '403':
+          description: User is not a room member
+        '404':
+          description: Room or playlist item not found
+        '500':
+          description: Internal server error
+    delete:
+      tags:
+        - Likes
+      summary: Remove like from playlist item
+      description: |
+        Removes user's like from a playlist item.
+        Updates both Redis (runtime state) and PostgreSQL (persistent user statistics).
+      operationId: unlikeTrack
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          description: Room UUID
+          schema:
+            type: string
+            format: uuid
+        - name: playlistItemId
+          in: path
+          required: true
+          description: Playlist item UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Successfully removed like from playlist item
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LikeDislikeResponse'
+        '401':
+          description: User is not authenticated
+        '403':
+          description: User is not a room member
+        '404':
+          description: Room or playlist item not found
+        '500':
+          description: Internal server error
+
+  /api/rooms/{roomId}/playlist/{playlistItemId}/dislike:
+    post:
+      tags:
+        - Likes
+      summary: Dislike a playlist item
+      description: |
+        Adds a dislike to a playlist item. If user previously liked, the like is removed.
+        Updates both Redis (runtime state) and PostgreSQL (persistent user statistics).
+      operationId: dislikeTrack
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          description: Room UUID
+          schema:
+            type: string
+            format: uuid
+        - name: playlistItemId
+          in: path
+          required: true
+          description: Playlist item UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Successfully disliked playlist item
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LikeDislikeResponse'
+        '401':
+          description: User is not authenticated
+        '403':
+          description: User is not a room member
+        '404':
+          description: Room or playlist item not found
+        '500':
+          description: Internal server error
+    delete:
+      tags:
+        - Likes
+      summary: Remove dislike from playlist item
+      description: |
+        Removes user's dislike from a playlist item.
+        Updates both Redis (runtime state) and PostgreSQL (persistent user statistics).
+      operationId: undislikeTrack
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          description: Room UUID
+          schema:
+            type: string
+            format: uuid
+        - name: playlistItemId
+          in: path
+          required: true
+          description: Playlist item UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Successfully removed dislike from playlist item
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LikeDislikeResponse'
+        '401':
+          description: User is not authenticated
+        '403':
+          description: User is not a room member
+        '404':
+          description: Room or playlist item not found
         '500':
           description: Internal server error
 
@@ -544,3 +1563,530 @@ components:
           type: string
           description: Tag name (normalized to lowercase)
           example: lofi
+
+    TokenExchangeRequest:
+      type: object
+      required:
+        - authorization_code
+        - code_verifier
+      properties:
+        authorization_code:
+          type: string
+          description: Authorization code received from Spotify callback (PKCE flow)
+        code_verifier:
+          type: string
+          description: PKCE code verifier (original random string used to generate code challenge)
+
+    SendChatMessageRequest:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: Message content (required, max 1000 characters)
+          example: Great song!
+
+    ChatMessage:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Chat message UUID
+        room_id:
+          type: string
+          format: uuid
+          description: Room UUID
+        sender_id:
+          type: string
+          format: uuid
+          description: Sender user UUID
+        sender_display_name:
+          type: string
+          description: Sender display name
+        content:
+          type: string
+          description: Message content
+        timestamp:
+          type: string
+          format: date-time
+          description: Message timestamp (ISO 8601)
+
+    RoomStateResponse:
+      type: object
+      properties:
+        room:
+          $ref: '#/components/schemas/RoomResponse'
+        playlist:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlaylistItem'
+          description: Complete playlist with track metadata and feedback counts
+        playback_state:
+          $ref: '#/components/schemas/PlaybackState'
+          description: Current playback state (if a track is playing)
+        chat_history:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+          description: Recent chat history (last 50 messages)
+
+    AddTrackRequest:
+      type: object
+      required:
+        - source_id
+        - source_uri
+        - name
+        - artist
+        - album
+        - duration_ms
+      properties:
+        source_id:
+          type: string
+          description: Spotify track ID
+        source_uri:
+          type: string
+          description: 'Spotify URI (e.g., spotify:track:...)'
+        name:
+          type: string
+          description: Track name
+        artist:
+          type: string
+          description: Primary artist name
+        album:
+          type: string
+          description: Album name
+        duration_ms:
+          type: integer
+          format: int64
+          description: Track duration in milliseconds
+        album_image_url:
+          type: string
+          format: uri
+          description: Optional album image URL
+
+    AddTrackResponse:
+      type: object
+      properties:
+        playlist_item_id:
+          type: string
+          format: uuid
+          description: UUID of the created playlist item
+        room_id:
+          type: string
+          format: uuid
+          description: Room UUID
+        source_id:
+          type: string
+          description: Spotify track ID
+        source_uri:
+          type: string
+          description: Spotify URI
+        name:
+          type: string
+          description: Track name
+        artist:
+          type: string
+          description: Artist name
+        album:
+          type: string
+          description: Album name
+        duration_ms:
+          type: integer
+          format: int64
+          description: Track duration in milliseconds
+        album_image_url:
+          type: string
+          format: uri
+          description: Album image URL
+        added_by_id:
+          type: string
+          format: uuid
+          description: User UUID who added the track
+        added_by_display_name:
+          type: string
+          description: Display name of user who added the track
+        added_at_ms:
+          type: integer
+          format: int64
+          description: UTC epoch milliseconds when added
+        sequence_number:
+          type: integer
+          format: int64
+          description: Chronological order number
+        status:
+          type: string
+          enum: [QUEUED, PLAYING, PLAYED, SKIPPED]
+          description: Playlist item status (always QUEUED for newly added tracks)
+        like_count:
+          type: integer
+          format: int64
+          description: Like count (0 for new tracks)
+        dislike_count:
+          type: integer
+          format: int64
+          description: Dislike count (0 for new tracks)
+        auto_started:
+          type: boolean
+          description: Whether this track was auto-started
+
+    GetPlaylistResponse:
+      type: object
+      properties:
+        room_id:
+          type: string
+          format: uuid
+          description: Room UUID
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlaylistItem'
+          description: Complete playlist items sorted by sequence number
+        total_count:
+          type: integer
+          description: Total number of playlist items
+
+    PlaylistItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Playlist item UUID
+        room_id:
+          type: string
+          format: uuid
+          description: Room UUID
+        spotify_track_id:
+          type: string
+          description: Spotify track ID
+        track_name:
+          type: string
+          description: Track name
+        track_artist:
+          type: string
+          description: Track artist
+        track_album:
+          type: string
+          description: Track album
+        track_image_url:
+          type: string
+          format: uri
+          description: Track image URL
+        duration_ms:
+          type: integer
+          format: int64
+          description: Track duration in milliseconds
+        added_by_id:
+          type: string
+          format: uuid
+          description: User UUID who added the track
+        added_by_display_name:
+          type: string
+          description: Display name of user who added the track
+        added_at_ms:
+          type: integer
+          format: int64
+          description: UTC epoch milliseconds when added
+        sequence_number:
+          type: integer
+          format: int64
+          description: Chronological order number
+        status:
+          type: string
+          enum: [QUEUED, PLAYING, PLAYED, SKIPPED]
+          description: Playlist item status
+        like_count:
+          type: integer
+          format: int64
+          description: Like count
+        dislike_count:
+          type: integer
+          format: int64
+          description: Dislike count
+
+    TrackSearchResponse:
+      type: object
+      properties:
+        tracks:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrackSearchResult'
+          description: List of track search results
+        total:
+          type: integer
+          description: Total number of results available
+        limit:
+          type: integer
+          description: Number of results per page
+        offset:
+          type: integer
+          description: Offset for pagination
+
+    TrackSearchResult:
+      type: object
+      properties:
+        source_id:
+          type: string
+          description: Spotify track ID
+        source_uri:
+          type: string
+          description: 'Spotify URI (spotify:track:...)'
+        name:
+          type: string
+          description: Track name
+        artist:
+          type: string
+          description: Primary artist name
+        album:
+          type: string
+          description: Album name
+        duration_ms:
+          type: integer
+          description: Track duration in milliseconds
+        album_image_url:
+          type: string
+          format: uri
+          description: Album cover image URL (medium size)
+        explicit:
+          type: boolean
+          description: Explicit content flag
+
+    PlaybackState:
+      type: object
+      properties:
+        current_playlist_item_id:
+          type: string
+          format: uuid
+          description: Current playlist item UUID
+        started_at_ms:
+          type: integer
+          format: int64
+          description: UTC epoch milliseconds when playback started
+        track_duration_ms:
+          type: integer
+          format: int64
+          description: Track duration in milliseconds
+        elapsed_ms:
+          type: integer
+          format: int64
+          description: Elapsed time in milliseconds
+        updated_at_ms:
+          type: integer
+          format: int64
+          description: UTC epoch milliseconds when state was last updated
+
+    VoteResponse:
+      type: object
+      properties:
+        vote_recorded:
+          type: boolean
+          description: Whether vote was successfully recorded
+        current_vote_count:
+          type: integer
+          format: int64
+          description: Current votes for this action
+        required_vote_count:
+          type: integer
+          format: int64
+          description: Votes required to reach threshold
+        online_member_count:
+          type: integer
+          format: int64
+          description: Total online members
+        threshold_reached:
+          type: boolean
+          description: Whether action was executed (threshold reached)
+        message:
+          type: string
+          description: User-friendly message
+        target_playlist_item_id:
+          type: string
+          format: uuid
+          description: 'For skip votes: the track being voted on'
+        target_user_id:
+          type: string
+          format: uuid
+          description: 'For kick votes: the user being voted on'
+
+    VoteStatusResponse:
+      type: object
+      properties:
+        skip_track_vote:
+          $ref: '#/components/schemas/SkipTrackVoteStatus'
+          description: Current skip track vote status (if a track is playing)
+        kick_user_votes:
+          type: array
+          items:
+            $ref: '#/components/schemas/KickUserVoteStatus'
+          description: Kick votes for each user
+
+    SkipTrackVoteStatus:
+      type: object
+      properties:
+        playlist_item_id:
+          type: string
+          format: uuid
+          description: Current playing track ID
+        track_name:
+          type: string
+          description: Track name
+        artist_name:
+          type: string
+          description: Artist name
+        current_vote_count:
+          type: integer
+          format: int64
+          description: Current votes to skip
+        required_vote_count:
+          type: integer
+          format: int64
+          description: Votes required
+        online_member_count:
+          type: integer
+          format: int64
+          description: Total online members
+
+    KickUserVoteStatus:
+      type: object
+      properties:
+        target_user_id:
+          type: string
+          format: uuid
+          description: User being voted to kick
+        target_user_display_name:
+          type: string
+          description: User's display name
+        current_vote_count:
+          type: integer
+          format: int64
+          description: Current votes to kick this user
+        required_vote_count:
+          type: integer
+          format: int64
+          description: Votes required
+        online_member_count:
+          type: integer
+          format: int64
+          description: Total online members
+
+    KickUserRequest:
+      type: object
+      required:
+        - target_user_id
+      properties:
+        target_user_id:
+          type: string
+          format: uuid
+          description: User UUID to kick
+
+    LikeDislikeResponse:
+      type: object
+      required:
+        - playlist_item_id
+        - room_id
+        - like_count
+        - dislike_count
+      properties:
+        playlist_item_id:
+          type: string
+          format: uuid
+          description: Playlist item UUID
+        room_id:
+          type: string
+          format: uuid
+          description: Room UUID
+        like_count:
+          type: integer
+          format: int64
+          description: Updated like count
+        dislike_count:
+          type: integer
+          format: int64
+          description: Updated dislike count
+        user_liked:
+          type: boolean
+          description: Whether current user has liked this item
+        user_disliked:
+          type: boolean
+          description: Whether current user has disliked this item
+        message:
+          type: string
+          description: Optional message
+
+    AppUserDTO:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: User UUID
+        spotify_user_id:
+          type: string
+          description: Spotify user ID
+        display_name:
+          type: string
+          description: User display name
+        email:
+          type: string
+          format: email
+          description: User email
+        country:
+          type: string
+          description: User country
+        href:
+          type: string
+          format: uri
+          description: Spotify API href
+        url:
+          type: string
+          format: uri
+          description: Spotify profile URL
+        type:
+          type: string
+          description: User type
+        ip_address:
+          type: string
+          description: IP address
+        last_active_at:
+          type: string
+          format: date-time
+          description: Last active timestamp (ISO 8601)
+        status:
+          type: string
+          description: User status
+        stats:
+          $ref: '#/components/schemas/UserStats'
+          description: User statistics
+        images:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserImage'
+          description: User profile images
+
+    UserStats:
+      type: object
+      properties:
+        total_like:
+          type: integer
+          description: Total likes received
+        total_dislike:
+          type: integer
+          description: Total dislikes received
+
+    UserImage:
+      type: object
+      properties:
+        url:
+          type: string
+          format: uri
+          description: Image URL
+        height:
+          type: integer
+          description: Image height in pixels
+        width:
+          type: integer
+          description: Image width in pixels
