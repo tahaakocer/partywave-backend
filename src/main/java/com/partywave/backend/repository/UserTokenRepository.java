@@ -38,4 +38,7 @@ public interface UserTokenRepository extends JpaRepository<UserToken, UUID> {
 
     @Query("select userToken from UserToken userToken left join fetch userToken.appUser where userToken.id =:id")
     Optional<UserToken> findOneWithToOneRelationships(@Param("id") UUID id);
+
+    @Query("select userToken from UserToken userToken left join fetch userToken.appUser where userToken.appUser.id =:userId")
+    Optional<UserToken> findByAppUserId(@Param("userId") UUID userId);
 }
