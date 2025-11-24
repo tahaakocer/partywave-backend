@@ -97,4 +97,17 @@ public interface RoomMemberRepository extends JpaRepository<RoomMember, UUID> {
      * @return Number of active members
      */
     long countByRoomAndIsActiveTrue(Room room);
+
+    /**
+     * Check if a user has moderator permissions (OWNER or MODERATOR role) in a room.
+     * Used for permission checks before allowing privileged actions like manual skip.
+     *
+     * @param roomId Room UUID
+     * @param userId User UUID
+     * @return true if user is active member with OWNER or MODERATOR role
+     */
+    @Query(
+        "select count(rm) > 0 from RoomMember rm where rm.room.id = :roomId and rm.appUser.id = :userId and rm.isActive = true and (rm.role = 'OWNER' or rm.role = 'MODERATOR')"
+    )
+    boolean hasModeratorPermissions(@Param("roomId") UUID roomId, @Param("userId") UUID userId);
 }

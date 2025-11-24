@@ -259,6 +259,7 @@ public class ExceptionTranslator extends ResponseEntityExceptionHandler {
         if (err instanceof TokenGenerationException) return HttpStatus.INTERNAL_SERVER_ERROR;
         if (err instanceof InvalidInvitationException) return HttpStatus.BAD_REQUEST;
         if (err instanceof UnauthorizedRoomAccessException) return HttpStatus.FORBIDDEN;
+        if (err instanceof com.partywave.backend.exception.ForbiddenException) return HttpStatus.FORBIDDEN;
         return null;
     }
 
