@@ -110,4 +110,17 @@ public interface RoomMemberRepository extends JpaRepository<RoomMember, UUID> {
         "select count(rm) > 0 from RoomMember rm where rm.room.id = :roomId and rm.appUser.id = :userId and rm.isActive = true and (rm.role = 'OWNER' or rm.role = 'MODERATOR')"
     )
     boolean hasModeratorPermissions(@Param("roomId") UUID roomId, @Param("userId") UUID userId);
+
+    /**
+     * Check if a user is the room owner.
+     * Used to prevent kicking the owner.
+     *
+     * @param roomId Room UUID
+     * @param userId User UUID
+     * @return true if user is active member with OWNER role
+     */
+    @Query(
+        "select count(rm) > 0 from RoomMember rm where rm.room.id = :roomId and rm.appUser.id = :userId and rm.isActive = true and rm.role = 'OWNER'"
+    )
+    boolean isRoomOwner(@Param("roomId") UUID roomId, @Param("userId") UUID userId);
 }
