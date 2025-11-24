@@ -12,6 +12,8 @@ import com.partywave.backend.service.dto.RefreshTokenResponseDTO;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.net.URI;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -77,15 +79,21 @@ public class AuthController {
      * GET /api/auth/spotify/callback : Handles Spotify OAuth2 callback
      *
      * Receives authorization code from Spotify, exchanges it for tokens,
-     * fetches user profile, creates/updates AppUser, and generates JWT tokens.
+     * fetches user profile, creates/updates AppUser, generates JWT tokens,
+     * and redirects to frontend with tokens in URL hash fragment.
+     *
+     * The tokens are passed in the URL hash fragment (after #) which:
+     * - Is not sent to the server (client-side only)
+     * - Is not stored in browser history
+     * - Provides secure token transmission to the frontend
      *
      * @param code Authorization code from Spotify
      * @param state CSRF protection state parameter
      * @param request HTTP request
-     * @return ResponseEntity with JWT tokens and user info
+     * @return 302 redirect to frontend with tokens in hash fragment
      */
     @GetMapping("/spotify/callback")
-    public ResponseEntity<JwtTokenResponseDTO> spotifyCallback(
+    public ResponseEntity<Void> spotifyCallback(
         @RequestParam("code") String code,
         @RequestParam(value = "state", required = false) String state,
         HttpServletRequest request
@@ -95,7 +103,8 @@ public class AuthController {
         // Validate state parameter for CSRF protection
         if (state != null && !stateStore.containsKey(state)) {
             LOG.warn("Invalid state parameter received in callback");
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
+            // Redirect to frontend with error
+            return buildErrorRedirect();
         }
 
         // Remove state from store after validation
@@ -103,34 +112,84 @@ public class AuthController {
             stateStore.remove(state);
         }
 
-        // Exchange code for Spotify tokens - exceptions will be handled by global exception handler
-        JsonNode tokenResponse = spotifyAuthService.exchangeCodeForTokens(code);
-        String spotifyAccessToken = tokenResponse.get("access_token").asText();
-        String spotifyRefreshToken = tokenResponse.has("refresh_token") ? tokenResponse.get("refresh_token").asText() : null;
-        int spotifyExpiresIn = tokenResponse.get("expires_in").asInt();
-        String scope = tokenResponse.has("scope") ? tokenResponse.get("scope").asText() : null;
+        try {
+            // Exchange code for Spotify tokens - exceptions will be handled by global exception handler
+            JsonNode tokenResponse = spotifyAuthService.exchangeCodeForTokens(code);
+            String spotifyAccessToken = tokenResponse.get("access_token").asText();
+            String spotifyRefreshToken = tokenResponse.has("refresh_token") ? tokenResponse.get("refresh_token").asText() : null;
+            int spotifyExpiresIn = tokenResponse.get("expires_in").asInt();
+            String scope = tokenResponse.has("scope") ? tokenResponse.get("scope").asText() : null;
 
-        // Fetch Spotify user profile
-        JsonNode userProfile = spotifyAuthService.fetchUserProfile(spotifyAccessToken);
+            // Fetch Spotify user profile
+            JsonNode userProfile = spotifyAuthService.fetchUserProfile(spotifyAccessToken);
 
-        // Extract client IP address
-        String ipAddress = extractIpAddress(request);
+            // Extract client IP address
+            String ipAddress = extractIpAddress(request);
 
-        // Create or update AppUser from Spotify profile
-        AppUser appUser = appUserService.createOrUpdateFromSpotifyProfile(
-            userProfile,
-            spotifyAccessToken,
-            spotifyRefreshToken,
-            spotifyExpiresIn,
-            scope,
-            ipAddress
-        );
+            // Create or update AppUser from Spotify profile
+            AppUser appUser = appUserService.createOrUpdateFromSpotifyProfile(
+                userProfile,
+                spotifyAccessToken,
+                spotifyRefreshToken,
+                spotifyExpiresIn,
+                scope,
+                ipAddress
+            );
 
-        // Generate PartyWave JWT tokens
-        JwtTokenResponseDTO jwtResponse = jwtAuthenticationService.generateTokens(appUser, request);
+            // Generate PartyWave JWT tokens
+            JwtTokenResponseDTO jwtResponse = jwtAuthenticationService.generateTokens(appUser, request);
 
-        LOG.debug("Successfully authenticated user and generated JWT tokens: {}", appUser.getId());
-        return ResponseEntity.ok(jwtResponse);
+            LOG.debug("Successfully authenticated user and generated JWT tokens: {}", appUser.getId());
+
+            // Build redirect URL with tokens in hash fragment
+            String redirectUrl = buildRedirectUrlWithTokens(jwtResponse);
+
+            return ResponseEntity.status(HttpStatus.FOUND).location(URI.create(redirectUrl)).build();
+        } catch (Exception e) {
+            LOG.error("Error during Spotify callback: {}", e.getMessage(), e);
+            // Redirect to frontend with error
+            return buildErrorRedirect();
+        }
+    }
+
+    /**
+     * Builds redirect URL to frontend with JWT tokens in hash fragment.
+     * Hash fragment is not sent to server and provides secure token transmission.
+     *
+     * @param jwtResponse JWT token response containing access and refresh tokens
+     * @return Redirect URL with tokens in hash fragment
+     */
+    private String buildRedirectUrlWithTokens(JwtTokenResponseDTO jwtResponse) {
+        String frontendUrl = spotifyAuthService.getFrontendUrl();
+
+        // Build hash fragment with encoded tokens
+        StringBuilder hashFragment = new StringBuilder();
+        hashFragment.append("access_token=").append(URLEncoder.encode(jwtResponse.getAccessToken(), StandardCharsets.UTF_8));
+        hashFragment.append("&refresh_token=").append(URLEncoder.encode(jwtResponse.getRefreshToken(), StandardCharsets.UTF_8));
+        hashFragment.append("&token_type=").append(URLEncoder.encode(jwtResponse.getTokenType(), StandardCharsets.UTF_8));
+        hashFragment.append("&expires_in=").append(jwtResponse.getExpiresIn());
+
+        if (jwtResponse.getUser() != null) {
+            hashFragment.append("&user_id=").append(URLEncoder.encode(jwtResponse.getUser().getId(), StandardCharsets.UTF_8));
+        }
+
+        // Construct redirect URL: frontend-url/auth/callback#tokens
+        String redirectUrl = frontendUrl.endsWith("/") ? frontendUrl : frontendUrl + "/";
+        redirectUrl += "auth/callback#" + hashFragment.toString();
+
+        LOG.debug("Built redirect URL to frontend (length: {})", redirectUrl.length());
+        return redirectUrl;
+    }
+
+    /**
+     * Builds redirect URL to frontend with error indication in hash fragment.
+     *
+     * @return Redirect response with error URL
+     */
+    private ResponseEntity<Void> buildErrorRedirect() {
+        String frontendUrl = spotifyAuthService.getFrontendUrl();
+        String redirectUrl = (frontendUrl.endsWith("/") ? frontendUrl : frontendUrl + "/") + "auth/callback#error=authentication_failed";
+        return ResponseEntity.status(HttpStatus.FOUND).location(URI.create(redirectUrl)).build();
     }
 
     /**

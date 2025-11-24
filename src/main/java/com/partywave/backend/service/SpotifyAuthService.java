@@ -40,6 +40,9 @@ public class SpotifyAuthService {
     @Value("${spotify.scope:user-read-email user-read-private}")
     private String scope;
 
+    @Value("${spotify.frontend-url}")
+    private String frontendUrl;
+
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
@@ -186,6 +189,15 @@ public class SpotifyAuthService {
             LOG.error("Error refreshing access token: {}", e.getMessage(), e);
             throw new SpotifyApiException("Error refreshing access token: " + e.getMessage(), "token_refresh", e);
         }
+    }
+
+    /**
+     * Gets the frontend URL for redirecting after successful authentication.
+     *
+     * @return Frontend URL
+     */
+    public String getFrontendUrl() {
+        return frontendUrl;
     }
 
     /**
