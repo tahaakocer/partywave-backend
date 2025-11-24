@@ -119,6 +119,15 @@ public class JwtTokenResponseDTO implements Serializable {
         @JsonProperty("display_name")
         private String displayName;
 
+        @JsonProperty("country")
+        private String country;
+
+        @JsonProperty("status")
+        private String status;
+
+        @JsonProperty("images")
+        private java.util.List<ImageDTO> images;
+
         public UserInfoDTO() {}
 
         public UserInfoDTO(String id, String spotifyUserId, String email, String displayName) {
@@ -126,6 +135,24 @@ public class JwtTokenResponseDTO implements Serializable {
             this.spotifyUserId = spotifyUserId;
             this.email = email;
             this.displayName = displayName;
+        }
+
+        public UserInfoDTO(
+            String id,
+            String spotifyUserId,
+            String email,
+            String displayName,
+            String country,
+            String status,
+            java.util.List<ImageDTO> images
+        ) {
+            this.id = id;
+            this.spotifyUserId = spotifyUserId;
+            this.email = email;
+            this.displayName = displayName;
+            this.country = country;
+            this.status = status;
+            this.images = images;
         }
 
         public String getId() {
@@ -160,6 +187,30 @@ public class JwtTokenResponseDTO implements Serializable {
             this.displayName = displayName;
         }
 
+        public String getCountry() {
+            return country;
+        }
+
+        public void setCountry(String country) {
+            this.country = country;
+        }
+
+        public String getStatus() {
+            return status;
+        }
+
+        public void setStatus(String status) {
+            this.status = status;
+        }
+
+        public java.util.List<ImageDTO> getImages() {
+            return images;
+        }
+
+        public void setImages(java.util.List<ImageDTO> images) {
+            this.images = images;
+        }
+
         @Override
         public String toString() {
             return (
@@ -176,8 +227,70 @@ public class JwtTokenResponseDTO implements Serializable {
                 ", displayName='" +
                 displayName +
                 '\'' +
+                ", country='" +
+                country +
+                '\'' +
+                ", status='" +
+                status +
+                '\'' +
+                ", images=" +
+                images +
                 '}'
             );
+        }
+    }
+
+    /**
+     * Nested DTO for user image information.
+     */
+    public static class ImageDTO implements Serializable {
+
+        private static final long serialVersionUID = 1L;
+
+        @JsonProperty("url")
+        private String url;
+
+        @JsonProperty("height")
+        private String height;
+
+        @JsonProperty("width")
+        private String width;
+
+        public ImageDTO() {}
+
+        public ImageDTO(String url, String height, String width) {
+            this.url = url;
+            this.height = height;
+            this.width = width;
+        }
+
+        public String getUrl() {
+            return url;
+        }
+
+        public void setUrl(String url) {
+            this.url = url;
+        }
+
+        public String getHeight() {
+            return height;
+        }
+
+        public void setHeight(String height) {
+            this.height = height;
+        }
+
+        public String getWidth() {
+            return width;
+        }
+
+        public void setWidth(String width) {
+            this.width = width;
+        }
+
+        @Override
+        public String toString() {
+            return "ImageDTO{" + "url='" + url + '\'' + ", height='" + height + '\'' + ", width='" + width + '\'' + '}';
         }
     }
 }

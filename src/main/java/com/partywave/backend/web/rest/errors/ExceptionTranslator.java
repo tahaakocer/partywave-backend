@@ -3,7 +3,9 @@ package com.partywave.backend.web.rest.errors;
 import static org.springframework.core.annotation.AnnotatedElementUtils.findMergedAnnotation;
 
 import com.partywave.backend.exception.AlreadyMemberException;
+import com.partywave.backend.exception.InvalidAuthorizationCodeException;
 import com.partywave.backend.exception.InvalidInvitationException;
+import com.partywave.backend.exception.InvalidPkceException;
 import com.partywave.backend.exception.InvalidRequestException;
 import com.partywave.backend.exception.InvalidTokenException;
 import com.partywave.backend.exception.ResourceNotFoundException;
@@ -212,6 +214,8 @@ public class ExceptionTranslator extends ResponseEntityExceptionHandler {
         if (err instanceof TokenGenerationException) return "Token Generation Error";
         if (err instanceof InvalidInvitationException) return "Invalid Invitation";
         if (err instanceof UnauthorizedRoomAccessException) return "Unauthorized Room Access";
+        if (err instanceof InvalidPkceException) return "Invalid PKCE";
+        if (err instanceof InvalidAuthorizationCodeException) return "Invalid Authorization Code";
         return null;
     }
 
@@ -228,7 +232,9 @@ public class ExceptionTranslator extends ResponseEntityExceptionHandler {
             err instanceof InvalidTokenException ||
             err instanceof TokenGenerationException ||
             err instanceof InvalidInvitationException ||
-            err instanceof UnauthorizedRoomAccessException
+            err instanceof UnauthorizedRoomAccessException ||
+            err instanceof InvalidPkceException ||
+            err instanceof InvalidAuthorizationCodeException
         ) {
             return err.getMessage();
         }
@@ -259,6 +265,8 @@ public class ExceptionTranslator extends ResponseEntityExceptionHandler {
         if (err instanceof TokenGenerationException) return HttpStatus.INTERNAL_SERVER_ERROR;
         if (err instanceof InvalidInvitationException) return HttpStatus.BAD_REQUEST;
         if (err instanceof UnauthorizedRoomAccessException) return HttpStatus.FORBIDDEN;
+        if (err instanceof InvalidPkceException) return HttpStatus.UNAUTHORIZED;
+        if (err instanceof InvalidAuthorizationCodeException) return HttpStatus.UNAUTHORIZED;
         if (err instanceof com.partywave.backend.exception.ForbiddenException) return HttpStatus.FORBIDDEN;
         return null;
     }

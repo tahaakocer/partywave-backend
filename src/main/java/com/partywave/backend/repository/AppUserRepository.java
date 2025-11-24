@@ -19,4 +19,15 @@ public interface AppUserRepository extends JpaRepository<AppUser, UUID> {
      * @return Optional of AppUser
      */
     Optional<AppUser> findBySpotifyUserId(String spotifyUserId);
+
+    /**
+     * Find AppUser by ID with images eagerly fetched.
+     * Used when images are needed immediately (e.g., token generation).
+     *
+     * @param id User ID
+     * @return Optional of AppUser with images loaded
+     */
+    @EntityGraph(attributePaths = { "images" })
+    @Query("SELECT u FROM AppUser u WHERE u.id = :id")
+    Optional<AppUser> findByIdWithImages(UUID id);
 }

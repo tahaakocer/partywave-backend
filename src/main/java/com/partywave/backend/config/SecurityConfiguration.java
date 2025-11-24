@@ -68,6 +68,7 @@ public class SecurityConfiguration {
                     .requestMatchers(mvc.pattern(HttpMethod.POST, "/api/auth/spotify/refresh")).permitAll()
                     .requestMatchers(mvc.pattern(HttpMethod.POST, "/api/auth/refresh")).permitAll()
                     .requestMatchers(mvc.pattern(HttpMethod.POST, "/api/auth/logout")).permitAll()
+                    .requestMatchers(mvc.pattern(HttpMethod.POST, "/api/auth/token")).permitAll()
                     .requestMatchers(mvc.pattern("/api/admin/**")).hasAuthority(AuthoritiesConstants.ADMIN)
                     .requestMatchers(mvc.pattern("/api/**")).authenticated()
                     .requestMatchers(mvc.pattern("/management/health")).permitAll()

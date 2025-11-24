@@ -36,6 +36,32 @@ public final class SecurityUtils {
         return Optional.ofNullable(extractPrincipal(securityContext.getAuthentication()));
     }
 
+    /**
+     * Get the user ID (UUID) of the current authenticated user from JWT token.
+     *
+     * @return the user ID as UUID, or empty if not authenticated or invalid
+     */
+    public static Optional<java.util.UUID> getCurrentUserId() {
+        SecurityContext securityContext = SecurityContextHolder.getContext();
+        Authentication authentication = securityContext.getAuthentication();
+
+        if (authentication == null) {
+            return Optional.empty();
+        }
+
+        // Extract from JWT token (principal is the Jwt object)
+        if (authentication.getPrincipal() instanceof Jwt jwt) {
+            String subject = jwt.getSubject(); // This is the user ID (UUID) from our JWT
+            try {
+                return Optional.of(java.util.UUID.fromString(subject));
+            } catch (IllegalArgumentException e) {
+                return Optional.empty();
+            }
+        }
+
+        return Optional.empty();
+    }
+
     private static String extractPrincipal(Authentication authentication) {
         if (authentication == null) {
             return null;

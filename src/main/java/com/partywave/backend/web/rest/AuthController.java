@@ -37,6 +37,8 @@ public class AuthController {
     private final SpotifyAuthService spotifyAuthService;
     private final AppUserService appUserService;
     private final JwtAuthenticationService jwtAuthenticationService;
+    private final com.partywave.backend.service.redis.PkceRedisService pkceRedisService;
+    private final com.partywave.backend.repository.AppUserRepository appUserRepository;
 
     // In-memory state storage for CSRF protection
     // TODO: Replace with Redis or database storage in production
@@ -45,11 +47,15 @@ public class AuthController {
     public AuthController(
         SpotifyAuthService spotifyAuthService,
         AppUserService appUserService,
-        JwtAuthenticationService jwtAuthenticationService
+        JwtAuthenticationService jwtAuthenticationService,
+        com.partywave.backend.service.redis.PkceRedisService pkceRedisService,
+        com.partywave.backend.repository.AppUserRepository appUserRepository
     ) {
         this.spotifyAuthService = spotifyAuthService;
         this.appUserService = appUserService;
         this.jwtAuthenticationService = jwtAuthenticationService;
+        this.pkceRedisService = pkceRedisService;
+        this.appUserRepository = appUserRepository;
     }
 
     /**
@@ -57,16 +63,36 @@ public class AuthController {
      *
      * Redirects the user to Spotify's authorization page.
      * Generates a random state parameter for CSRF protection.
+     * Optionally supports PKCE (Proof Key for Code Exchange) for enhanced security.
      *
+     * @param codeChallenge Optional PKCE code challenge (base64url-encoded SHA-256 hash of code verifier)
+     * @param codeChallengeMethod Optional PKCE challenge method (must be "S256" if provided)
      * @return 302 redirect to Spotify authorization URL
      */
     @GetMapping("/spotify/login")
-    public ResponseEntity<Void> spotifyLogin() {
-        LOG.debug("REST request to initiate Spotify login");
+    public ResponseEntity<Void> spotifyLogin(
+        @RequestParam(required = false) String codeChallenge,
+        @RequestParam(required = false) String codeChallengeMethod
+    ) {
+        LOG.debug("REST request to initiate Spotify login (PKCE enabled: {})", codeChallenge != null);
+
+        // Validate PKCE parameters if provided
+        if (codeChallenge != null) {
+            if (codeChallengeMethod != null && !"S256".equals(codeChallengeMethod)) {
+                LOG.warn("Invalid code challenge method: {}. Only S256 is supported.", codeChallengeMethod);
+                throw new com.partywave.backend.exception.InvalidPkceException("Invalid code challenge method. Only S256 is supported.");
+            }
+        }
 
         // Generate random state for CSRF protection
         String state = UUID.randomUUID().toString();
         stateStore.put(state, state); // Store state for validation
+
+        // Store code challenge in Redis if PKCE is enabled
+        if (codeChallenge != null) {
+            pkceRedisService.storeChallengeForState(state, codeChallenge);
+            LOG.debug("Stored PKCE code challenge for state: {}", state);
+        }
 
         // Get authorization URL from service
         String authUrl = spotifyAuthService.getAuthorizationUrl(state);
@@ -79,18 +105,20 @@ public class AuthController {
      * GET /api/auth/spotify/callback : Handles Spotify OAuth2 callback
      *
      * Receives authorization code from Spotify, exchanges it for tokens,
-     * fetches user profile, creates/updates AppUser, generates JWT tokens,
-     * and redirects to frontend with tokens in URL hash fragment.
+     * fetches user profile, creates/updates AppUser.
      *
-     * The tokens are passed in the URL hash fragment (after #) which:
-     * - Is not sent to the server (client-side only)
-     * - Is not stored in browser history
-     * - Provides secure token transmission to the frontend
+     * If PKCE is enabled (code challenge was provided during login):
+     * - Returns a temporary authorization code that must be exchanged for JWT tokens
+     * - Client must call POST /api/auth/token with code verifier to get JWT tokens
+     *
+     * If PKCE is not enabled (backward compatibility):
+     * - Generates JWT tokens immediately
+     * - Redirects to frontend with tokens in URL hash fragment
      *
      * @param code Authorization code from Spotify
      * @param state CSRF protection state parameter
      * @param request HTTP request
-     * @return 302 redirect to frontend with tokens in hash fragment
+     * @return 302 redirect to frontend with authorization code or JWT tokens
      */
     @GetMapping("/spotify/callback")
     public ResponseEntity<Void> spotifyCallback(
@@ -106,6 +134,15 @@ public class AuthController {
             // Redirect to frontend with error
             return buildErrorRedirect();
         }
+
+        // Check if PKCE was used by retrieving code challenge from Redis
+        String codeChallenge = null;
+        if (state != null) {
+            codeChallenge = pkceRedisService.getChallengeByState(state);
+        }
+
+        boolean pkceEnabled = codeChallenge != null;
+        LOG.debug("PKCE enabled for this callback: {}", pkceEnabled);
 
         // Remove state from store after validation
         if (state != null) {
@@ -136,17 +173,42 @@ public class AuthController {
                 ipAddress
             );
 
-            // Generate PartyWave JWT tokens
-            JwtTokenResponseDTO jwtResponse = jwtAuthenticationService.generateTokens(appUser, request);
+            LOG.debug("Successfully authenticated user with Spotify: {}", appUser.getId());
 
-            LOG.debug("Successfully authenticated user and generated JWT tokens: {}", appUser.getId());
+            if (pkceEnabled) {
+                // PKCE flow: Generate authorization code and store it in Redis
+                com.partywave.backend.service.PkceService pkceService = new com.partywave.backend.service.PkceService();
+                String authorizationCode = pkceService.generateAuthorizationCode();
 
-            // Build redirect URL with tokens in hash fragment
-            String redirectUrl = buildRedirectUrlWithTokens(jwtResponse);
+                // Store authorization code with user ID and code challenge
+                pkceRedisService.storeAuthorizationCode(authorizationCode, appUser.getId(), codeChallenge);
 
-            return ResponseEntity.status(HttpStatus.FOUND).location(URI.create(redirectUrl)).build();
+                // Clean up code challenge from Redis
+                if (state != null) {
+                    pkceRedisService.deleteChallengeForState(state);
+                }
+
+                LOG.debug("Generated authorization code for PKCE flow");
+
+                // Build redirect URL with authorization code in hash fragment
+                String redirectUrl = buildRedirectUrlWithAuthorizationCode(authorizationCode);
+                return ResponseEntity.status(HttpStatus.FOUND).location(URI.create(redirectUrl)).build();
+            } else {
+                // Legacy flow: Generate JWT tokens immediately
+                JwtTokenResponseDTO jwtResponse = jwtAuthenticationService.generateTokens(appUser, request);
+
+                LOG.debug("Successfully generated JWT tokens: {}", appUser.getId());
+
+                // Build redirect URL with tokens in hash fragment
+                String redirectUrl = buildRedirectUrlWithTokens(jwtResponse);
+                return ResponseEntity.status(HttpStatus.FOUND).location(URI.create(redirectUrl)).build();
+            }
         } catch (Exception e) {
             LOG.error("Error during Spotify callback: {}", e.getMessage(), e);
+            // Clean up code challenge if it exists
+            if (state != null && codeChallenge != null) {
+                pkceRedisService.deleteChallengeForState(state);
+            }
             // Redirect to frontend with error
             return buildErrorRedirect();
         }
@@ -173,11 +235,34 @@ public class AuthController {
             hashFragment.append("&user_id=").append(URLEncoder.encode(jwtResponse.getUser().getId(), StandardCharsets.UTF_8));
         }
 
-        // Construct redirect URL: frontend-url/auth/callback#tokens
+        // Construct redirect URL: frontend-url/pkce-test.html#tokens
         String redirectUrl = frontendUrl.endsWith("/") ? frontendUrl : frontendUrl + "/";
-        redirectUrl += "auth/callback#" + hashFragment.toString();
+        redirectUrl += "pkce-test.html#" + hashFragment.toString();
 
         LOG.debug("Built redirect URL to frontend (length: {})", redirectUrl.length());
+        return redirectUrl;
+    }
+
+    /**
+     * Builds redirect URL to frontend with authorization code in hash fragment.
+     * Used for PKCE flow - client must exchange this code for JWT tokens.
+     *
+     * @param authorizationCode The temporary authorization code
+     * @return Redirect URL with authorization code in hash fragment
+     */
+    private String buildRedirectUrlWithAuthorizationCode(String authorizationCode) {
+        String frontendUrl = spotifyAuthService.getFrontendUrl();
+
+        // Build hash fragment with authorization code
+        StringBuilder hashFragment = new StringBuilder();
+        hashFragment.append("authorization_code=").append(URLEncoder.encode(authorizationCode, StandardCharsets.UTF_8));
+        hashFragment.append("&expires_in=").append(300); // 5 minutes
+
+        // Construct redirect URL: frontend-url/pkce-test.html#authorization_code
+        String redirectUrl = frontendUrl.endsWith("/") ? frontendUrl : frontendUrl + "/";
+        redirectUrl += "pkce-test.html#" + hashFragment.toString();
+
+        LOG.debug("Built redirect URL to frontend with authorization code");
         return redirectUrl;
     }
 
@@ -190,6 +275,82 @@ public class AuthController {
         String frontendUrl = spotifyAuthService.getFrontendUrl();
         String redirectUrl = (frontendUrl.endsWith("/") ? frontendUrl : frontendUrl + "/") + "auth/callback#error=authentication_failed";
         return ResponseEntity.status(HttpStatus.FOUND).location(URI.create(redirectUrl)).build();
+    }
+
+    /**
+     * POST /api/auth/token : Exchanges authorization code for JWT tokens using PKCE
+     *
+     * This endpoint is used in the PKCE flow after the client receives an authorization code
+     * from the Spotify callback. The client must provide the code verifier to prove they
+     * initiated the original authorization request.
+     *
+     * @param tokenRequest Request containing authorization code and code verifier
+     * @param request HTTP request (for IP and user agent)
+     * @return ResponseEntity with JWT access and refresh tokens
+     */
+    @PostMapping("/token")
+    public ResponseEntity<JwtTokenResponseDTO> exchangeToken(
+        @Valid @RequestBody com.partywave.backend.service.dto.TokenExchangeRequestDTO tokenRequest,
+        HttpServletRequest request
+    ) {
+        LOG.debug("REST request to exchange authorization code for JWT tokens");
+
+        try {
+            // Retrieve authorization code data from Redis
+            com.partywave.backend.service.redis.PkceRedisService.AuthorizationCodeData authData = pkceRedisService.getAuthorizationCodeData(
+                tokenRequest.getAuthorizationCode()
+            );
+
+            if (authData == null) {
+                LOG.warn("Authorization code not found or expired: {}", tokenRequest.getAuthorizationCode());
+                LOG.warn("This could mean: 1) Code expired (5 min TTL), 2) Redis not connected, 3) Code was already used");
+                throw new com.partywave.backend.exception.InvalidAuthorizationCodeException(
+                    "Authorization code is invalid or has expired. Please try logging in again."
+                );
+            }
+
+            // Validate PKCE: code verifier must match code challenge
+            com.partywave.backend.service.PkceService pkceService = new com.partywave.backend.service.PkceService();
+            boolean isValid = pkceService.validateCodeVerifier(tokenRequest.getCodeVerifier(), authData.getCodeChallenge());
+
+            if (!isValid) {
+                LOG.warn("PKCE validation failed: code verifier does not match code challenge");
+                // Delete authorization code to prevent retry attacks
+                pkceRedisService.deleteAuthorizationCode(tokenRequest.getAuthorizationCode());
+                throw new com.partywave.backend.exception.InvalidPkceException("Code verifier validation failed");
+            }
+
+            LOG.debug("PKCE validation successful");
+
+            // Load user from database with images eagerly fetched
+            UUID userId = UUID.fromString(authData.getUserId());
+            AppUser appUser = appUserRepository
+                .findByIdWithImages(userId)
+                .orElseThrow(() -> new com.partywave.backend.exception.ResourceNotFoundException("User", "id", userId));
+
+            // Generate JWT tokens
+            JwtTokenResponseDTO jwtResponse = jwtAuthenticationService.generateTokens(appUser, request);
+
+            // Delete authorization code after successful exchange (single use)
+            pkceRedisService.deleteAuthorizationCode(tokenRequest.getAuthorizationCode());
+
+            LOG.debug("Successfully exchanged authorization code for JWT tokens: {}", userId);
+            return ResponseEntity.ok(jwtResponse);
+        } catch (
+            com.partywave.backend.exception.InvalidAuthorizationCodeException
+            | com.partywave.backend.exception.InvalidPkceException
+            | com.partywave.backend.exception.ResourceNotFoundException e
+        ) {
+            LOG.warn("Token exchange failed: {}", e.getMessage());
+            throw e;
+        } catch (Exception e) {
+            LOG.error("Error exchanging authorization code for JWT tokens: {}", e.getMessage(), e);
+            LOG.error("Exception type: {}, Cause: {}", e.getClass().getName(), e.getCause());
+            throw new com.partywave.backend.exception.InvalidAuthorizationCodeException(
+                "Failed to exchange authorization code: " + e.getMessage(),
+                e
+            );
+        }
     }
 
     /**

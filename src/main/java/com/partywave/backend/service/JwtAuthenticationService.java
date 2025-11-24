@@ -55,12 +55,39 @@ public class JwtAuthenticationService {
             String accessToken = jwtTokenProvider.generateAccessToken(appUser);
             String refreshToken = jwtTokenProvider.generateRefreshToken(appUser, ipAddress, deviceInfo);
 
-            // Create user info DTO
+            // Create user info DTO with full details
+            // Handle images safely - they might be lazy loaded
+            java.util.List<JwtTokenResponseDTO.ImageDTO> imageDTOs = new java.util.ArrayList<>();
+            try {
+                if (appUser.getImages() != null) {
+                    imageDTOs = appUser
+                        .getImages()
+                        .stream()
+                        .map(img ->
+                            new JwtTokenResponseDTO.ImageDTO(
+                                img.getUrl(),
+                                img.getHeight() != null ? img.getHeight().toString() : null,
+                                img.getWidth() != null ? img.getWidth().toString() : null
+                            )
+                        )
+                        .collect(java.util.stream.Collectors.toList());
+                }
+            } catch (org.hibernate.LazyInitializationException e) {
+                LOG.warn("Images are lazy loaded and session is closed. Skipping images in token response.");
+                // Images will be empty list - user can fetch them via /users/me endpoint
+            } catch (Exception e) {
+                LOG.warn("Failed to load user images: {}", e.getMessage());
+                // Images will be empty list
+            }
+
             JwtTokenResponseDTO.UserInfoDTO userInfo = new JwtTokenResponseDTO.UserInfoDTO(
                 appUser.getId().toString(),
                 appUser.getSpotifyUserId(),
                 appUser.getEmail(),
-                appUser.getDisplayName()
+                appUser.getDisplayName(),
+                appUser.getCountry(),
+                appUser.getStatus() != null ? appUser.getStatus().toString() : null,
+                imageDTOs
             );
 
             // Create response
