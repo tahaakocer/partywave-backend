@@ -30,4 +30,15 @@ public interface AppUserRepository extends JpaRepository<AppUser, UUID> {
     @EntityGraph(attributePaths = { "images" })
     @Query("SELECT u FROM AppUser u WHERE u.id = :id")
     Optional<AppUser> findByIdWithImages(UUID id);
+
+    /**
+     * Find AppUser by ID with stats and images eagerly fetched.
+     * Used when full user profile is needed (e.g., /api/users/me endpoint).
+     *
+     * @param id User ID
+     * @return Optional of AppUser with stats and images loaded
+     */
+    @EntityGraph(attributePaths = { "stats", "images" })
+    @Query("SELECT u FROM AppUser u WHERE u.id = :id")
+    Optional<AppUser> findByIdWithStatsAndImages(UUID id);
 }

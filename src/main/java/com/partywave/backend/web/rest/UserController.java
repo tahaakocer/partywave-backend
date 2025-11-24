@@ -45,8 +45,10 @@ public class UserController {
         UUID userId = SecurityUtils.getCurrentUserId()
             .orElseThrow(() -> new ResourceNotFoundException("User", "authentication", "No authenticated user found"));
 
-        // Load user with all relationships
-        AppUser appUser = appUserRepository.findById(userId).orElseThrow(() -> new ResourceNotFoundException("User", "id", userId));
+        // Load user with stats and images eagerly fetched to avoid lazy loading issues
+        AppUser appUser = appUserRepository
+            .findByIdWithStatsAndImages(userId)
+            .orElseThrow(() -> new ResourceNotFoundException("User", "id", userId));
 
         // Convert to DTO
         AppUserDTO userDTO = convertToDTO(appUser);
